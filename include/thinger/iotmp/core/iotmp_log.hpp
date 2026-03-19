@@ -21,14 +21,31 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef THINGER_IOTMP_HPP
-#define THINGER_IOTMP_HPP
+#ifndef THINGER_IOTMP_LOG_HPP
+#define THINGER_IOTMP_LOG_HPP
 
-#include "core/iotmp_log.hpp"
-#include "core/iotmp_types.hpp"
-#include "core/iotmp_message.hpp"
-#include "core/iotmp_encoder.hpp"
-#include "core/iotmp_decoder.hpp"
-#include "core/iotmp_resource.hpp"
+// Logging macros for IOTMP protocol.
+// By default these are no-ops. Each platform defines them before
+// including the core headers:
+//
+// Arduino: maps to Serial.printf() when THINGER_SERIAL_DEBUG is defined
+// Zephyr:  maps to Zephyr LOG_MODULE (LOG_INF, LOG_DBG, LOG_ERR, LOG_WRN)
+// Other:   define THINGER_LOG_INFO etc. before including iotmp.hpp
+
+#ifndef THINGER_LOG_ERROR
+#define THINGER_LOG_ERROR(fmt, ...)
+#endif
+
+#ifndef THINGER_LOG_WARNING
+#define THINGER_LOG_WARNING(fmt, ...)
+#endif
+
+#ifndef THINGER_LOG_INFO
+#define THINGER_LOG_INFO(fmt, ...)
+#endif
+
+#ifndef THINGER_LOG_DEBUG
+#define THINGER_LOG_DEBUG(fmt, ...)
+#endif
 
 #endif
