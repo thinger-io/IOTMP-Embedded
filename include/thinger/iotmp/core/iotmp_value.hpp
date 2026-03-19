@@ -98,6 +98,22 @@ private:
     array_t*     arr_ptr() const { return static_cast<array_t*>(data_.ptr); }
     object_t*    obj_ptr() const { return static_cast<object_t*>(data_.ptr); }
 
+    static std::string escape_json(const std::string& s) {
+        std::string result;
+        result.reserve(s.size());
+        for(char c : s) {
+            switch(c) {
+                case '"':  result += "\\\""; break;
+                case '\\': result += "\\\\"; break;
+                case '\n': result += "\\n"; break;
+                case '\r': result += "\\r"; break;
+                case '\t': result += "\\t"; break;
+                default:   result += c; break;
+            }
+        }
+        return result;
+    }
+
     // Ensure this value is an object (auto-promote from null)
     object_t& ensure_object() {
         if(type_ != value_t::object) {
@@ -350,6 +366,41 @@ public:
             case value_t::string: return str_ptr()->empty();
             case value_t::binary: return bin_ptr()->empty();
             default: return false;
+        }
+    }
+
+    // ======================== JSON serialization ========================
+
+    std::string dump() const {
+        switch(type_) {
+            case value_t::null:    return "null";
+            case value_t::boolean: return data_.b ? "true" : "false";
+            case value_t::number_unsigned: return std::to_string(data_.u);
+            case value_t::number_integer:  return std::to_string(data_.i);
+            case value_t::number_float:    return std::to_string(data_.d);
+            case value_t::string:
+                return "\"" + escape_json(*str_ptr()) + "\"";
+            case value_t::binary:
+                return "\"<binary:" + std::to_string(bin_ptr()->size()) + ">\"";
+            case value_t::array: {
+                std::string s = "[";
+                const auto& arr = *arr_ptr();
+                for(size_t i = 0; i < arr.size(); ++i) {
+                    if(i > 0) s += ",";
+                    s += arr[i].dump();
+                }
+                return s + "]";
+            }
+            case value_t::object: {
+                std::string s = "{";
+                const auto& obj = *obj_ptr();
+                for(size_t i = 0; i < obj.size(); ++i) {
+                    if(i > 0) s += ",";
+                    s += "\"" + escape_json(obj[i].first) + "\":" + obj[i].second.dump();
+                }
+                return s + "}";
+            }
+            default: return "null";
         }
     }
 
