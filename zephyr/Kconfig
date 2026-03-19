@@ -1,0 +1,2 @@
+# Empty — iotmp-embedded is header-only, no configuration needed.
+# Platform-specific options are in each platform module (iotmp-zephyr, etc.)

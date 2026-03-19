@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Build artifacts
+build/
+tests/native/test_protocol
+tests/native/test_live
+
+# IDE
+.vscode/
+.idea/
+*.swp
