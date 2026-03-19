@@ -29,11 +29,7 @@ This library is designed to be consumed by platform-specific IOTMP client librar
 Add the `include/` directory to your compiler's include path:
 
 ```cpp
-#include <thinger/iotmp/core/iotmp_value.hpp>
-#include <thinger/iotmp/core/iotmp_message.hpp>
-#include <thinger/iotmp/core/iotmp_encoder.hpp>
-#include <thinger/iotmp/core/iotmp_decoder.hpp>
-#include <thinger/iotmp/core/iotmp_resource.hpp>
+#include <thinger/iotmp/iotmp.hpp>
 ```
 
 ### Zephyr module
