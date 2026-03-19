@@ -21,15 +21,45 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef THINGER_IOTMP_HPP
-#define THINGER_IOTMP_HPP
+#ifndef THINGER_IOTMP_COMPAT_HPP
+#define THINGER_IOTMP_COMPAT_HPP
 
-#include "core/iotmp_log.hpp"
-#include "core/iotmp_types.hpp"
-#include "core/iotmp_message.hpp"
-#include "core/iotmp_encoder.hpp"
-#include "core/iotmp_decoder.hpp"
-#include "core/iotmp_resource.hpp"
-#include "core/iotmp_compat.hpp"
+#include "iotmp_resource.hpp"
 
+namespace thinger::iotmp {
+
+// operator>> assigns an output callback to a resource
+inline void operator>>(iotmp_resource& res, std::function<void(output&)> fn) {
+    res = std::move(fn);
+}
+
+// operator<< assigns an input or input/output callback to a resource
+inline void operator<<(iotmp_resource& res, std::function<void(input&)> fn) {
+    res = std::move(fn);
+}
+
+inline void operator<<(iotmp_resource& res, std::function<void(input&, output&)> fn) {
+    res = std::move(fn);
+}
+
+} // namespace thinger::iotmp
+
+// Platform-independent macros
+#ifndef outputValue
+#define outputValue(value) [](thinger::iotmp::output& out){ out = value; }
 #endif
+
+#ifndef outputString
+#define outputString(value) [](thinger::iotmp::output& out){ out = value; }
+#endif
+
+// Platform-specific macros — no-ops by default, override in platform headers
+#ifndef digitalPin
+#define digitalPin(PIN) [](thinger::iotmp::input& in, thinger::iotmp::output& out){ (void)in; (void)out; (void)PIN; }
+#endif
+
+#ifndef analogPin
+#define analogPin(PIN) [](thinger::iotmp::output& out){ (void)out; (void)PIN; }
+#endif
+
+#endif // THINGER_IOTMP_COMPAT_HPP
