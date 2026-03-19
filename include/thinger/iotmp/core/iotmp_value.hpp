@@ -127,12 +127,12 @@ public:
 
     // Accept any unsigned integer type (except bool)
     template<typename T, std::enable_if_t<
-        std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool>, int> = 0>
+        std::is_integral<T>::value && std::is_unsigned<T>::value && !std::is_same<T, bool>::value, int> = 0>
     iotmp_value(T v) : type_(value_t::number_unsigned) { data_.u = v; }
 
     // Accept any signed integer type
     template<typename T, std::enable_if_t<
-        std::is_integral_v<T> && std::is_signed_v<T>, int> = 0>
+        std::is_integral<T>::value && std::is_signed<T>::value, int> = 0>
     iotmp_value(T v) : type_(value_t::number_integer) { data_.i = v; }
 
     iotmp_value(float v)  : type_(value_t::number_float) { data_.d = v; }
@@ -181,11 +181,11 @@ public:
     iotmp_value& operator=(bool v) { destroy(); type_ = value_t::boolean; data_.b = v; return *this; }
 
     template<typename T, std::enable_if_t<
-        std::is_integral_v<T> && std::is_unsigned_v<T> && !std::is_same_v<T, bool>, int> = 0>
+        std::is_integral<T>::value && std::is_unsigned<T>::value && !std::is_same<T, bool>::value, int> = 0>
     iotmp_value& operator=(T v) { destroy(); type_ = value_t::number_unsigned; data_.u = v; return *this; }
 
     template<typename T, std::enable_if_t<
-        std::is_integral_v<T> && std::is_signed_v<T>, int> = 0>
+        std::is_integral<T>::value && std::is_signed<T>::value, int> = 0>
     iotmp_value& operator=(T v) { destroy(); type_ = value_t::number_integer; data_.i = v; return *this; }
 
     iotmp_value& operator=(float v)  { destroy(); type_ = value_t::number_float; data_.d = v; return *this; }
@@ -224,30 +224,30 @@ public:
 
     template<typename T>
     T get() const {
-        if constexpr (std::is_same_v<T, bool>) {
+        if constexpr (std::is_same<T, bool>::value) {
             return data_.b;
-        } else if constexpr (std::is_integral_v<T> && std::is_unsigned_v<T>) {
+        } else if constexpr (std::is_integral<T>::value && std::is_unsigned<T>::value) {
             switch(type_) {
                 case value_t::number_unsigned: return static_cast<T>(data_.u);
                 case value_t::number_integer:  return static_cast<T>(data_.i);
                 case value_t::number_float:    return static_cast<T>(data_.d);
                 default: return T{};
             }
-        } else if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
+        } else if constexpr (std::is_integral<T>::value && std::is_signed<T>::value) {
             switch(type_) {
                 case value_t::number_integer:  return static_cast<T>(data_.i);
                 case value_t::number_unsigned: return static_cast<T>(data_.u);
                 case value_t::number_float:    return static_cast<T>(data_.d);
                 default: return T{};
             }
-        } else if constexpr (std::is_floating_point_v<T>) {
+        } else if constexpr (std::is_floating_point<T>::value) {
             switch(type_) {
                 case value_t::number_float:    return static_cast<T>(data_.d);
                 case value_t::number_unsigned: return static_cast<T>(data_.u);
                 case value_t::number_integer:  return static_cast<T>(data_.i);
                 default: return T{};
             }
-        } else if constexpr (std::is_same_v<T, std::string>) {
+        } else if constexpr (std::is_same<T, std::string>::value) {
             return type_ == value_t::string ? *str_ptr() : std::string{};
         }
         return T{};
