@@ -510,7 +510,7 @@ void test_value_assignment_operators() {
 }
 
 // ============================================================================
-// 8. PSON v2: roundtrip for all types
+// 8. PSON: roundtrip for all types
 // ============================================================================
 
 void test_pson_null() {
@@ -674,7 +674,7 @@ void test_pson_binary_empty() {
 }
 
 // ============================================================================
-// 9. PSON v2: nested structures
+// 9. PSON: nested structures
 // ============================================================================
 
 void test_pson_simple_object() {
@@ -788,7 +788,7 @@ void test_pson_mixed_array() {
 }
 
 // ============================================================================
-// 10. PSON v2: edge cases
+// 10. PSON: edge cases
 // ============================================================================
 
 void test_pson_edge_zero_values() {
@@ -1442,7 +1442,7 @@ int main() {
     test_value_assignment_operators();
 
     // -- PSON roundtrip --
-    printf("\n--- PSON v2: roundtrip ---\n");
+    printf("\n--- PSON: roundtrip ---\n");
     test_pson_null();
     test_pson_bool_true();
     test_pson_bool_false();
@@ -1462,7 +1462,7 @@ int main() {
     test_pson_binary_empty();
 
     // -- PSON nested --
-    printf("\n--- PSON v2: nested structures ---\n");
+    printf("\n--- PSON: nested structures ---\n");
     test_pson_simple_object();
     test_pson_simple_array();
     test_pson_nested_object();
@@ -1472,7 +1472,7 @@ int main() {
     test_pson_mixed_array();
 
     // -- PSON edge cases --
-    printf("\n--- PSON v2: edge cases ---\n");
+    printf("\n--- PSON: edge cases ---\n");
     test_pson_edge_zero_values();
     test_pson_edge_large_numbers();
     test_pson_encode_decode_size();

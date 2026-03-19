@@ -6,9 +6,9 @@ This library provides the protocol foundation (encoding, decoding, message frami
 
 ## Features
 
-- **PSON v2** binary encoding/decoding — compact, self-describing, wire-compatible with [Thinger.io](https://thinger.io)
+- **[PSON](https://www.mdpi.com/1424-8220/21/13/4559)** binary encoding/decoding — compact, self-describing serialization format for IoT
 - **IOTMP message framing** — protobuf-style varint fields with support for all message types (CONNECT, RUN, DESCRIBE, START_STREAM, STOP_STREAM, STREAM_DATA, KEEP_ALIVE, etc.)
-- **Lightweight value type** (`iotmp_value`) — dynamic JSON-like data model at ~12 bytes per value on 32-bit targets, replacing nlohmann::json for embedded use
+- **Lightweight value type** (`iotmp_value`) — dynamic JSON-like data model at ~12 bytes per value on 32-bit targets
 - **Resource model** — register input, output, and input/output callbacks with `operator=`
 - **Header-only** — no compilation needed, just add the include path
 - **Zero platform dependencies** — pure C++17, works on any platform with a conforming compiler
@@ -90,7 +90,7 @@ thing["config"] = [](input& in, output& out) {
 thing["reboot"] = []() { reboot(); };
 ```
 
-### PSON v2 encoding/decoding
+### PSON encoding/decoding
 
 ```cpp
 // Encode
@@ -131,8 +131,8 @@ c++ -std=c++17 -I../../include -o test_protocol test_protocol.cpp
 include/thinger/iotmp/core/
 ├── iotmp_value.hpp       # Lightweight dynamic value type
 ├── pson_types.hpp        # PSON wire type enum
-├── pson_encoder.hpp      # PSON v2 binary encoder (template)
-├── pson_decoder.hpp      # PSON v2 binary decoder (template)
+├── pson_encoder.hpp      # PSON binary encoder (template)
+├── pson_decoder.hpp      # PSON binary decoder (template)
 ├── iotmp_encoder.hpp     # IOTMP message encoder
 ├── iotmp_decoder.hpp     # IOTMP message decoder
 ├── iotmp_message.hpp     # Message model (types, fields, framing)
@@ -142,6 +142,11 @@ include/thinger/iotmp/core/
 ```
 
 The encoders and decoders are **template-based** on Writer/Reader types, allowing zero-copy operation with any I/O backend (memory buffers, sockets, streams).
+
+## References
+
+- [PSON: A Serialization Format for IoT Sensor Networks](https://www.mdpi.com/1424-8220/21/13/4559) — Sensors 2021
+- [Thinger.io Documentation](https://docs.thinger.io)
 
 ## License
 
