@@ -1,5 +1,7 @@
 # IOTMP-Embedded
 
+[![Tests](https://github.com/thinger-io/IOTMP-Embedded/actions/workflows/tests.yml/badge.svg)](https://github.com/thinger-io/IOTMP-Embedded/actions/workflows/tests.yml)
+
 Portable, header-only C++17 implementation of the [IOTMP](https://docs.thinger.io) (IoT Message Protocol) core for embedded platforms.
 
 This library provides the protocol foundation (encoding, decoding, message framing, and resource model) used by platform-specific IOTMP client libraries such as [IOTMP-Zephyr](https://github.com/thinger-io/IOTMP-Zephyr) and [IOTMP-Arduino](https://github.com/thinger-io/iotmp-arduino).

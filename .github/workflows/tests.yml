@@ -1,0 +1,30 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        compiler: [g++, clang++]
+        exclude:
+          - os: macos-latest
+            compiler: g++
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build tests
+        run: |
+          cd tests/native
+          ${{ matrix.compiler }} -std=c++17 -Wall -Wextra -Werror -I../../include -o test_protocol test_protocol.cpp
+
+      - name: Run tests
+        run: ./tests/native/test_protocol
