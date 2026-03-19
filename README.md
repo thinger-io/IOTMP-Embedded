@@ -67,27 +67,27 @@ auto bin = iotmp_value::binary({0x01, 0x02, 0x03});
 
 ### Resources
 
-Define device resources with input/output callbacks:
+Define device resources with input/output callbacks. The typical usage is via a client instance:
 
 ```cpp
-// Output resource (sensor)
-iotmp_resource sensor;
-sensor = std::function<void(output&)>([](output& out) {
+// Output resource (sensor — server reads from device)
+thing["sensor"] = [](output& out) {
     out["celsius"] = read_temperature();
-});
+};
 
-// Input resource (actuator)
-iotmp_resource actuator;
-actuator = std::function<void(input&)>([](input& in) {
+// Input resource (actuator — server writes to device)
+thing["led"] = [](input& in) {
     set_led(in["state"].get<bool>());
-});
+};
 
-// Input/Output resource
-iotmp_resource rpc;
-rpc = std::function<void(input&, output&)>([](input& in, output& out) {
-    auto cmd = in["command"].get<std::string>();
-    out["result"] = process(cmd);
-});
+// Input/Output resource (bidirectional)
+thing["config"] = [](input& in, output& out) {
+    if(!in.is_empty()) threshold = in["value"].get<float>();
+    out["value"] = threshold;
+};
+
+// Run resource (action, no data)
+thing["reboot"] = []() { reboot(); };
 ```
 
 ### PSON v2 encoding/decoding
