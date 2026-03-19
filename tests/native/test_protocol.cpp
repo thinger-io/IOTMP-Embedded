@@ -1105,9 +1105,9 @@ void test_resource_run_callback() {
     TEST("resource: run callback (no input/output)");
     iotmp_resource res;
     bool called = false;
-    res = std::function<void()>([&called]() {
+    res = [&called]() {
         called = true;
-    });
+    };
 
     CHECK(res.get_io_type() == iotmp_resource::run, "type is run");
 
@@ -1122,10 +1122,10 @@ void test_resource_run_callback() {
 void test_resource_output_callback() {
     TEST("resource: output callback");
     iotmp_resource res;
-    res = std::function<void(output&)>([](output& out) {
+    res = [](output& out) {
         out["temp"] = 23.5;
         out["hum"] = 65u;
-    });
+    };
 
     CHECK(res.get_io_type() == iotmp_resource::output_wrapper, "type is output");
 
@@ -1143,10 +1143,10 @@ void test_resource_input_callback() {
     iotmp_resource res;
     bool received = false;
     int received_val = 0;
-    res = std::function<void(input&)>([&](input& in) {
+    res = [&](input& in) {
         received = true;
         received_val = in["value"].get<int32_t>();
-    });
+    };
 
     CHECK(res.get_io_type() == iotmp_resource::input_wrapper, "type is input");
 
@@ -1163,14 +1163,12 @@ void test_resource_input_output_callback() {
     TEST("resource: input/output callback");
     iotmp_resource res;
     float threshold = 30.0f;
-    res = std::function<void(input&, output&)>(
-        [&threshold](input& in, output& out) {
+    res = [&threshold](input& in, output& out) {
             if(!in.is_empty()) {
                 threshold = in["value"].get<float>();
             }
             out["value"] = threshold;
-        }
-    );
+        };
 
     CHECK(res.get_io_type() == iotmp_resource::input_output_wrapper, "type is input_output");
 
@@ -1199,9 +1197,9 @@ void test_resource_none() {
 void test_resource_output_error() {
     TEST("resource: output callback with error");
     iotmp_resource res;
-    res = std::function<void(output&)>([](output& out) {
+    res = [](output& out) {
         out.set_error("something failed");
-    });
+    };
 
     iotmp_message req(message::type::RUN);
     iotmp_message resp(message::type::OK);
@@ -1214,10 +1212,10 @@ void test_resource_output_error() {
 void test_resource_output_return_code() {
     TEST("resource: output callback with return code");
     iotmp_resource res;
-    res = std::function<void(output&)>([](output& out) {
+    res = [](output& out) {
         out.set_return_code(404);
         out["status"] = "not found";
-    });
+    };
 
     iotmp_message req(message::type::RUN);
     iotmp_message resp(message::type::OK);
@@ -1233,10 +1231,10 @@ void test_resource_output_return_code() {
 void test_resource_describe_output() {
     TEST("resource: describe output resource");
     iotmp_resource res;
-    res = std::function<void(output&)>([](output& out) {
+    res = [](output& out) {
         out["temp"] = 0.0;
         out["hum"] = 0u;
-    });
+    };
 
     iotmp_message desc_msg(message::type::DESCRIBE);
     res.describe(desc_msg);
@@ -1248,10 +1246,10 @@ void test_resource_describe_output() {
 void test_resource_describe_input() {
     TEST("resource: describe input resource");
     iotmp_resource res;
-    res = std::function<void(input&)>([](input& in) {
+    res = [](input& in) {
         bool val = in["state"].get<bool>();
         (void)val;
-    });
+    };
 
     iotmp_message desc_msg(message::type::DESCRIBE);
     res.describe(desc_msg);
@@ -1263,11 +1261,11 @@ void test_resource_describe_input() {
 void test_resource_describe_input_output() {
     TEST("resource: describe input_output resource");
     iotmp_resource res;
-    res = std::function<void(input&, output&)>([](input& in, output& out) {
+    res = [](input& in, output& out) {
         float v = in["value"].get<float>();
         (void)v;
         out["value"] = 0.0f;
-    });
+    };
 
     iotmp_message desc_msg(message::type::DESCRIBE);
     res.describe(desc_msg);
@@ -1280,9 +1278,9 @@ void test_resource_describe_input_output() {
 void test_resource_fill_api() {
     TEST("resource: fill_api");
     iotmp_resource res;
-    res = std::function<void(output&)>([](output& out) {
+    res = [](output& out) {
         out["x"] = 0;
-    });
+    };
 
     json_t content;
     res.fill_api(content);
