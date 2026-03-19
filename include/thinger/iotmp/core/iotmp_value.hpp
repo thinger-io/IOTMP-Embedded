@@ -49,7 +49,8 @@ public:
         string,
         binary,
         array,
-        object
+        object,
+        discarded
     };
 
 private:
@@ -446,6 +447,205 @@ public:
         v.type_ = value_t::binary;
         v.data_.ptr = new binary_t(data, data + size);
         return v;
+    }
+
+    // ======================== Discarded (parse failure) ========================
+
+    bool is_discarded() const { return type_ == value_t::discarded; }
+
+    static iotmp_value discarded() {
+        iotmp_value v;
+        v.type_ = value_t::discarded;
+        return v;
+    }
+
+    // ======================== JSON parsing ========================
+
+    // Parse a JSON string into an iotmp_value.
+    // Compatible with nlohmann::json signature: parse(text, nullptr, allow_exceptions)
+    // When allow_exceptions is false, returns a discarded value on error.
+    static iotmp_value parse(const char* text, void* = nullptr, bool = true) {
+        if(!text) return discarded();
+        const char* p = text;
+        iotmp_value result;
+        if(parse_value(p, result)) {
+            skip_ws(p);
+            return result;
+        }
+        return discarded();
+    }
+
+    static iotmp_value parse(const std::string& text, void* cb = nullptr, bool allow_exceptions = true) {
+        return parse(text.c_str(), cb, allow_exceptions);
+    }
+
+private:
+    static void skip_ws(const char*& p) {
+        while(*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    }
+
+    static bool parse_value(const char*& p, iotmp_value& out) {
+        skip_ws(p);
+        if(*p == '\0') return false;
+
+        switch(*p) {
+            case '"': return parse_string(p, out);
+            case '{': return parse_object(p, out);
+            case '[': return parse_array(p, out);
+            case 't': return parse_literal(p, "true", 4, out, true);
+            case 'f': return parse_literal(p, "false", 5, out, false);
+            case 'n': return parse_null(p, out);
+            default:
+                if(*p == '-' || (*p >= '0' && *p <= '9')) return parse_number(p, out);
+                return false;
+        }
+    }
+
+    static bool parse_string(const char*& p, iotmp_value& out) {
+        std::string s;
+        if(!parse_string_raw(p, s)) return false;
+        out = std::move(s);
+        return true;
+    }
+
+    static bool parse_string_raw(const char*& p, std::string& out) {
+        if(*p != '"') return false;
+        ++p;
+        out.clear();
+        while(*p && *p != '"') {
+            if(*p == '\\') {
+                ++p;
+                switch(*p) {
+                    case '"':  out += '"'; break;
+                    case '\\': out += '\\'; break;
+                    case '/':  out += '/'; break;
+                    case 'n':  out += '\n'; break;
+                    case 'r':  out += '\r'; break;
+                    case 't':  out += '\t'; break;
+                    case 'b':  out += '\b'; break;
+                    case 'f':  out += '\f'; break;
+                    case 'u': {
+                        // Basic \uXXXX support (BMP only)
+                        ++p;
+                        unsigned cp = 0;
+                        for(int i = 0; i < 4; ++i) {
+                            cp <<= 4;
+                            char c = *p;
+                            if(c >= '0' && c <= '9') cp |= (c - '0');
+                            else if(c >= 'a' && c <= 'f') cp |= (c - 'a' + 10);
+                            else if(c >= 'A' && c <= 'F') cp |= (c - 'A' + 10);
+                            else return false;
+                            ++p;
+                        }
+                        // UTF-8 encode
+                        if(cp < 0x80) {
+                            out += static_cast<char>(cp);
+                        } else if(cp < 0x800) {
+                            out += static_cast<char>(0xC0 | (cp >> 6));
+                            out += static_cast<char>(0x80 | (cp & 0x3F));
+                        } else {
+                            out += static_cast<char>(0xE0 | (cp >> 12));
+                            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                            out += static_cast<char>(0x80 | (cp & 0x3F));
+                        }
+                        continue; // already advanced past \uXXXX
+                    }
+                    default: return false;
+                }
+            } else {
+                out += *p;
+            }
+            ++p;
+        }
+        if(*p != '"') return false;
+        ++p;
+        return true;
+    }
+
+    static bool parse_number(const char*& p, iotmp_value& out) {
+        const char* start = p;
+        bool negative = false;
+        bool is_float = false;
+
+        if(*p == '-') { negative = true; ++p; }
+        if(!(*p >= '0' && *p <= '9')) return false;
+        while(*p >= '0' && *p <= '9') ++p;
+        if(*p == '.') { is_float = true; ++p; while(*p >= '0' && *p <= '9') ++p; }
+        if(*p == 'e' || *p == 'E') {
+            is_float = true; ++p;
+            if(*p == '+' || *p == '-') ++p;
+            while(*p >= '0' && *p <= '9') ++p;
+        }
+
+        std::string num_str(start, p);
+        if(is_float) {
+            out = std::stod(num_str);
+        } else if(negative) {
+            out = static_cast<int64_t>(std::stoll(num_str));
+        } else {
+            out = static_cast<uint64_t>(std::stoull(num_str));
+        }
+        return true;
+    }
+
+    static bool parse_object(const char*& p, iotmp_value& out) {
+        if(*p != '{') return false;
+        ++p;
+        out = iotmp_value::object();
+        skip_ws(p);
+        if(*p == '}') { ++p; return true; }
+
+        while(true) {
+            skip_ws(p);
+            std::string key;
+            if(!parse_string_raw(p, key)) return false;
+            skip_ws(p);
+            if(*p != ':') return false;
+            ++p;
+            iotmp_value val;
+            if(!parse_value(p, val)) return false;
+            out[key] = std::move(val);
+            skip_ws(p);
+            if(*p == '}') { ++p; return true; }
+            if(*p != ',') return false;
+            ++p;
+        }
+    }
+
+    static bool parse_array(const char*& p, iotmp_value& out) {
+        if(*p != '[') return false;
+        ++p;
+        out = iotmp_value::array();
+        skip_ws(p);
+        if(*p == ']') { ++p; return true; }
+
+        while(true) {
+            iotmp_value val;
+            if(!parse_value(p, val)) return false;
+            out.emplace_back(std::move(val));
+            skip_ws(p);
+            if(*p == ']') { ++p; return true; }
+            if(*p != ',') return false;
+            ++p;
+        }
+    }
+
+    static bool parse_literal(const char*& p, const char* lit, size_t len, iotmp_value& out, bool bool_val) {
+        if(std::strncmp(p, lit, len) == 0) {
+            p += len;
+            out = bool_val;
+            return true;
+        }
+        return false;
+    }
+
+    static bool parse_null(const char*& p, iotmp_value& out) {
+        if(std::strncmp(p, "null", 4) == 0) {
+            p += 4;
+            out = nullptr;
+            return true;
+        }
+        return false;
     }
 };
 

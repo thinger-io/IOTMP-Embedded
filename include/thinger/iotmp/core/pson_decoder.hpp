@@ -122,7 +122,7 @@ namespace thinger::iotmp {
                     if(type_payload > UINT16_MAX) return false;
                     std::string str;
                     str.resize(type_payload);
-                    if(!read(str.data(), type_payload)) return false;
+                    if(!read(&str[0], type_payload)) return false;
                     value = std::move(str);
                     return true;
                 }
@@ -181,7 +181,7 @@ namespace thinger::iotmp {
 
             std::string key;
             key.resize(key_size);
-            if(!read(key.data(), key_size)) return false;
+            if(!read(&key[0], key_size)) return false;
 
             return decode(object[key]);
         }

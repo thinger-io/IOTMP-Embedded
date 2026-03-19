@@ -189,36 +189,36 @@ namespace thinger::iotmp {
         }
 
         // Describe the resource (auto-discovery)
-        void describe(iotmp_message& message) {
+        void describe(iotmp_message& msg) {
             switch(io_type_) {
                 case output_wrapper: {
                     json_t out_data;
                     output wrapper(out_data, true);
                     output_fn_(wrapper);
                     if(!out_data.is_null()) {
-                        message[message::field::PAYLOAD]["out"].swap(out_data);
+                        msg[message::field::PAYLOAD]["out"].swap(out_data);
                     }
                     break;
                 }
                 case input_wrapper: {
                     json_t in_data;
-                    input wrapper(message.get_stream_id(), in_data, true);
+                    input wrapper(msg.get_stream_id(), in_data, true);
                     input_fn_(wrapper);
                     if(!in_data.is_null()) {
-                        message[message::field::PAYLOAD]["in"].swap(in_data);
+                        msg[message::field::PAYLOAD]["in"].swap(in_data);
                     }
                     break;
                 }
                 case input_output_wrapper: {
                     json_t in_data, out_data;
-                    input in_w(message.get_stream_id(), in_data, true);
+                    input in_w(msg.get_stream_id(), in_data, true);
                     output out_w(out_data, true);
                     input_output_fn_(in_w, out_w);
                     if(!in_data.is_null()) {
-                        message[message::field::PAYLOAD]["in"].swap(in_data);
+                        msg[message::field::PAYLOAD]["in"].swap(in_data);
                     }
                     if(!out_data.is_null()) {
-                        message[message::field::PAYLOAD]["out"].swap(out_data);
+                        msg[message::field::PAYLOAD]["out"].swap(out_data);
                     }
                     break;
                 }
