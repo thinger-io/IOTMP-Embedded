@@ -12,6 +12,7 @@ This library provides the protocol foundation (encoding, decoding, message frami
 - **IOTMP message framing** — protobuf-style varint fields with support for all message types (CONNECT, RUN, DESCRIBE, START_STREAM, STOP_STREAM, STREAM_DATA, KEEP_ALIVE, etc.)
 - **Lightweight value type** (`iotmp_value`) — dynamic JSON-like data model at ~12 bytes per value on 32-bit targets
 - **Resource model** — register input, output, and input/output callbacks with `operator=`
+- **CRTP client base** (`iotmp_client_base`) — complete client logic (authentication, message handling, streaming, keepalive) with zero-overhead compile-time polymorphism. Platform clients only implement `send_bytes` and `recv_bytes`.
 - **Header-only** — no compilation needed, just add the include path
 - **Zero platform dependencies** — pure C++17, works on any platform with a conforming compiler
 
@@ -23,8 +24,9 @@ This library is designed to be consumed by platform-specific IOTMP client librar
 
 | Platform | Repository |
 |----------|------------|
+| Arduino / ESP32 / ESP8266 | [IOTMP-Arduino](https://github.com/thinger-io/IOTMP-Arduino) |
+| ESP-IDF (native) | [IOTMP-ESPIDF](https://github.com/thinger-io/IOTMP-ESPIDF) |
 | Zephyr RTOS | [IOTMP-Zephyr](https://github.com/thinger-io/IOTMP-Zephyr) |
-| Arduino / ESP32 | [IOTMP-Arduino](https://github.com/thinger-io/iotmp-arduino) |
 
 ### Direct usage
 
@@ -131,15 +133,18 @@ c++ -std=c++17 -I../../include -o test_protocol test_protocol.cpp
 
 ```
 include/thinger/iotmp/core/
+├── iotmp_client.hpp      # CRTP client base (auth, messages, streams, keepalive)
 ├── iotmp_value.hpp       # Lightweight dynamic value type
-├── pson_types.hpp        # PSON wire type enum
-├── pson_encoder.hpp      # PSON binary encoder (template)
-├── pson_decoder.hpp      # PSON binary decoder (template)
+├── iotmp_resource.hpp    # Resource model (input/output callbacks)
+├── iotmp_message.hpp     # Message model (types, fields, framing)
 ├── iotmp_encoder.hpp     # IOTMP message encoder
 ├── iotmp_decoder.hpp     # IOTMP message decoder
-├── iotmp_message.hpp     # Message model (types, fields, framing)
-├── iotmp_resource.hpp    # Resource model (input/output callbacks)
+├── pson_encoder.hpp      # PSON binary encoder (template)
+├── pson_decoder.hpp      # PSON binary decoder (template)
+├── pson_types.hpp        # PSON wire type enum
 ├── iotmp_adapters.hpp    # I/O adapters (memory, string, null writers)
+├── iotmp_compat.hpp      # Operators (>> <<) and platform macros
+├── iotmp_log.hpp         # Unified logging macros
 └── iotmp_types.hpp       # Common type aliases
 ```
 
