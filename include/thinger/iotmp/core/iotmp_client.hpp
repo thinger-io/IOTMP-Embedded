@@ -31,6 +31,7 @@
 #include "iotmp_resource.hpp"
 #include "iotmp_adapters.hpp"
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -441,6 +442,48 @@ namespace thinger::iotmp {
             return stream_resource(res, res.get_stream_id());
         }
 
+        // ----- Connection state --------------------------------------
+
+        bool is_connected() const { return connected_; }
+
+        // ----- Server API --------------------------------------------
+
+        bool set_property(const char* id, json_t data) {
+            iotmp_message msg(message::RUN);
+            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::SET_DEVICE_PROPERTY);
+            msg[message::field::RESOURCE] = id;
+            msg[message::field::PAYLOAD] = std::move(data);
+            return send_and_wait_response(msg);
+        }
+
+        bool get_property(const char* id, json_t& data) {
+            return send_and_wait_response_with_payload(
+                server::READ_DEVICE_PROPERTY, id, nullptr, &data);
+        }
+
+        bool write_bucket(const char* id, json_t data) {
+            iotmp_message msg(message::RUN);
+            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::WRITE_BUCKET);
+            msg[message::field::RESOURCE] = id;
+            msg[message::field::PAYLOAD] = std::move(data);
+            return send_and_wait_response(msg);
+        }
+
+        bool call_endpoint(const char* name) {
+            iotmp_message msg(message::RUN);
+            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::CALL_ENDPOINT);
+            msg[message::field::RESOURCE] = name;
+            return send_and_wait_response(msg);
+        }
+
+        bool call_endpoint(const char* name, json_t data) {
+            iotmp_message msg(message::RUN);
+            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::CALL_ENDPOINT);
+            msg[message::field::RESOURCE] = name;
+            msg[message::field::PAYLOAD] = std::move(data);
+            return send_and_wait_response(msg);
+        }
+
         // ----- Resource lookup ---------------------------------------
 
         iotmp_resource* find_resource(const char* path) {
@@ -468,6 +511,98 @@ namespace thinger::iotmp {
         void notify_state(client_state state) {
             if(state_callback_) state_callback_(state);
         }
+
+        // ----- Server API helpers ------------------------------------
+
+        bool send_and_wait_response(iotmp_message& msg, json_t* response_payload = nullptr) {
+            if(!connected_) return false;
+
+            msg.set_random_stream_id();
+            uint16_t expected_id = msg.get_stream_id();
+            send_message(msg);
+
+            // Read messages until we get the response with the matching stream_id
+            int attempts = 0;
+            while(connected_ && attempts < 100) {
+                iotmp_message response(message::RESERVED);
+                if(!read_message(response)) break;
+
+                if(response.get_stream_id() == expected_id &&
+                   response.get_message_type() <= message::ERROR) {
+                    if(response_payload && response.has_payload()) {
+                        *response_payload = std::move(response.payload());
+                    }
+                    return response.get_message_type() == message::OK;
+                }
+                // Not our response — handle it normally
+                handle_message(response);
+                attempts++;
+            }
+            return false;
+        }
+
+        // Helper for server calls that need to capture the response payload
+        bool send_and_wait_response_with_payload(
+            server::run run_code,
+            const char* resource_name,
+            json_t* request_payload,
+            json_t* response_payload)
+        {
+            iotmp_message msg(message::RUN);
+            msg[message::field::PARAMETERS] = static_cast<uint64_t>(run_code);
+            msg[message::field::RESOURCE] = resource_name;
+            if(request_payload) {
+                msg[message::field::PAYLOAD] = std::move(*request_payload);
+            }
+            return send_and_wait_response(msg, response_payload);
+        }
+
+        // ----- Process helpers (used by derived handle/run loops) ----
+
+        // Process a single incoming message (non-blocking: only call when data is available).
+        // Returns false if the connection was lost.
+        bool process_incoming() {
+            iotmp_message msg(message::RESERVED);
+            if(!read_message(msg)) return false;
+            handle_message(msg);
+            return true;
+        }
+
+        // Check and send keepalive if needed.
+        void process_keepalive(unsigned long now) {
+            if(now - last_keepalive_ >= keepalive_ms_) {
+                send_keepalive();
+                last_keepalive_ = now;
+            }
+        }
+
+        // ----- Reconnect backoff -------------------------------------
+
+        bool should_reconnect(unsigned long now) const {
+            return (now - last_connection_attempt_) >= reconnect_ms_;
+        }
+
+        void update_backoff() {
+            reconnect_ms_ = std::min(reconnect_ms_ * 2, reconnect_max_ms_);
+        }
+
+        void reset_backoff() {
+            reconnect_ms_ = 5000UL;
+        }
+
+        // ----- State -------------------------------------------------
+
+        // Connection flag — set/cleared by the derived class
+        bool connected_ = false;
+
+        // Keepalive timing
+        unsigned long last_keepalive_ = 0;
+        unsigned long keepalive_ms_ = 60000;
+
+        // Reconnect timing
+        unsigned long last_connection_attempt_ = 0;
+        unsigned long reconnect_ms_ = 5000;
+        unsigned long reconnect_max_ms_ = 60000;
 
         // State callback
         state_callback_t state_callback_;
