@@ -5,6 +5,8 @@
 build/
 tests/native/test_protocol
 tests/native/test_live
+tests/test_client
+tests/test_protocol
 
 # IDE
 .vscode/

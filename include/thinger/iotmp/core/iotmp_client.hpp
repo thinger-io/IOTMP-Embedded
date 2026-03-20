@@ -124,6 +124,19 @@ namespace thinger::iotmp {
             if(port != 0) port_ = port;
         }
 
+        void set_keepalive(unsigned long seconds) {
+            keepalive_ms_ = seconds * 1000;
+        }
+
+        void set_reconnect_timeout(unsigned long base_ms, unsigned long max_ms = 60000) {
+            reconnect_ms_ = base_ms;
+            reconnect_max_ms_ = max_ms;
+        }
+
+        void set_max_message_size(uint32_t size) {
+            max_message_size_ = size;
+        }
+
         void set_credentials(const char* user, const char* device, const char* credential) {
             username_ = user;
             device_id_ = device;
@@ -163,6 +176,12 @@ namespace thinger::iotmp {
             if(!read_varint(body_size)) return false;
 
             if(body_size == 0) return true;
+
+            // Validate message size
+            if(body_size > max_message_size_) {
+                THINGER_LOG_ERROR("Message too large: %u (max %u)", body_size, max_message_size_);
+                return false;
+            }
 
             // Read body into buffer, then decode from memory
             std::vector<uint8_t> body(body_size);
@@ -676,6 +695,9 @@ namespace thinger::iotmp {
         // Keepalive timing
         unsigned long last_keepalive_ = 0;
         unsigned long keepalive_ms_ = 60000;
+
+        // Max incoming message size (protection against malformed/malicious data)
+        uint32_t max_message_size_ = 32768;  // 32KB default
 
         // Reconnect timing
         unsigned long last_connection_attempt_ = 0;
