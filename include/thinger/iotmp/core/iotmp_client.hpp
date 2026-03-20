@@ -77,6 +77,10 @@ namespace thinger::iotmp {
     //   bool send_bytes_impl(const void* data, size_t len)
     //   bool recv_bytes_impl(void* data, size_t len)
     //   bool is_connected_impl() const
+    //   bool connect_impl()          — connect to server (DNS, socket, TLS)
+    //   void disconnect_impl()       — disconnect and clean up socket/TLS
+    //   bool data_available_impl()   — check if data available without blocking
+    //   unsigned long get_millis() const
     // ----------------------------------------------------------------
     template<typename Derived>
     class iotmp_client_base {
@@ -248,7 +252,7 @@ namespace thinger::iotmp {
                 case message::KEEP_ALIVE:
                     break;
                 case message::DISCONNECT:
-                    derived().on_disconnect();
+                    disconnect();
                     break;
                 default:
                     break;
@@ -446,6 +450,80 @@ namespace thinger::iotmp {
 
         bool is_connected() const { return connected_; }
 
+        // ----- Connection lifecycle (handle + disconnect) ------------
+
+        // Main loop: manages connect, authenticate, process messages,
+        // keepalive, and periodic streams.  Non-virtual — derived WiFi /
+        // network classes can hide it (or wrap it) to add their own
+        // pre-checks.
+        void handle() {
+            unsigned long now = get_millis_();
+
+            if(!connected_) {
+                if(!should_reconnect(now)) return;
+                last_connection_attempt_ = now;
+
+                // Connect
+                notify_state(client_state::SOCKET_CONNECTING);
+                THINGER_LOG_INFO("Connecting to %s:%u", host_, port_);
+                if(!connect_()) {
+                    THINGER_LOG_ERROR("Connection failed");
+                    notify_state(client_state::SOCKET_CONNECTION_ERROR);
+                    update_backoff();
+                    return;
+                }
+                THINGER_LOG_INFO("Connected");
+                notify_state(client_state::SOCKET_CONNECTED);
+
+                // Authenticate
+                notify_state(client_state::AUTHENTICATING);
+                if(!authenticate()) {
+                    THINGER_LOG_ERROR("Authentication failed");
+                    notify_state(client_state::AUTH_FAILED);
+                    disconnect();
+                    update_backoff();
+                    return;
+                }
+                THINGER_LOG_INFO("Authenticated");
+                notify_state(client_state::AUTHENTICATED);
+                connected_ = true;
+                last_keepalive_ = get_millis_();
+                reset_backoff();
+                notify_state(client_state::READY);
+            }
+
+            // Check transport still connected
+            if(!is_connected_()) {
+                disconnect();
+                return;
+            }
+
+            // Process incoming messages (non-blocking)
+            while(data_available_()) {
+                if(!process_incoming()) {
+                    disconnect();
+                    return;
+                }
+            }
+
+            // Keepalive
+            process_keepalive(get_millis_());
+
+            // Periodic streams
+            check_streams();
+        }
+
+        // Disconnect and clean up
+        void disconnect() {
+            if(connected_) {
+                THINGER_LOG_INFO("Disconnected");
+                connected_ = false;
+                notify_state(client_state::SOCKET_DISCONNECTED);
+            }
+            disconnect_impl_();
+            clear_streams();
+        }
+
         // ----- Server API --------------------------------------------
 
         bool set_property(const char* id, json_t data) {
@@ -631,6 +709,14 @@ namespace thinger::iotmp {
         const Derived& derived() const {
             return *static_cast<const Derived*>(this);
         }
+
+        // ----- CRTP dispatch for connection lifecycle -----------------
+
+        bool connect_() { return derived().connect_impl(); }
+        void disconnect_impl_() { derived().disconnect_impl(); }
+        bool data_available_() { return derived().data_available_impl(); }
+        bool is_connected_() { return derived().is_connected_impl(); }
+        unsigned long get_millis_() { return derived().get_millis(); }
 
         // ----- Helpers -----------------------------------------------
 

@@ -46,11 +46,15 @@ public:
     }
 
     bool is_connected_impl() const { return connected; }
+    bool data_available_impl() { return rx_pos < rx_buffer.size(); }
     unsigned long get_millis() const { return millis_value; }
-    void on_disconnect() { connected = false; }
+    bool connect_impl() { return connected; }
+    void disconnect_impl() { connected = false; }
 
     // Test helpers
     unsigned long millis_value = 0;
+
+    void set_connected(bool v) { connected_ = v; }
 
     void reset() {
         tx_buffer.clear();
@@ -881,16 +885,22 @@ TEST_CASE("handle_message with KEEP_ALIVE does not send response") {
 // Disconnect handling tests
 // ============================================================================
 
-TEST_CASE("handle_message with DISCONNECT calls on_disconnect") {
+TEST_CASE("handle_message with DISCONNECT triggers disconnect") {
     mock_client client;
     CHECK(client.connected == true);
+    CHECK(client.is_connected() == false); // connected_ (base) starts false
+
+    // Simulate being connected at the protocol level too
+    client.set_connected(true);
+    CHECK(client.is_connected() == true);
 
     client.queue_response(message::DISCONNECT);
     iotmp_message incoming(message::RESERVED);
     REQUIRE(client.read_message(incoming));
     client.handle_message(incoming);
 
-    CHECK(client.connected == false);
+    CHECK(client.connected == false);      // disconnect_impl() called
+    CHECK(client.is_connected() == false);  // base connected_ cleared
 }
 
 // ============================================================================
