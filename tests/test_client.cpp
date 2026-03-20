@@ -24,13 +24,31 @@ using namespace thinger::iotmp;
 class mock_client : public iotmp_client_base<mock_client> {
 public:
     mock_client()
-        : iotmp_client_base("test_user", "test_device", "test_credential") {}
+        : iotmp_client_base("test_user", "test_device", "test_credential") {
+        set_state_callback([this](client_state s) {
+            states_received.push_back(s);
+        });
+    }
 
     // Buffers for simulating I/O
     std::string tx_buffer;   // what the client sends
     std::string rx_buffer;   // what the client reads (simulated server responses)
     size_t rx_pos = 0;
     bool connected = true;
+
+    // Control connect behavior
+    bool connect_should_succeed = true;
+    int connect_call_count = 0;
+
+    // Track disconnect calls
+    bool disconnect_called = false;
+
+    // Control data availability separately from buffer state
+    bool has_data = false;
+    bool use_has_data_flag = false;  // when true, data_available uses has_data instead of buffer
+
+    // State tracking
+    std::vector<client_state> states_received;
 
     // CRTP implementations
     bool send_bytes_impl(const void* data, size_t len) {
@@ -46,10 +64,26 @@ public:
     }
 
     bool is_connected_impl() const { return connected; }
-    bool data_available_impl() { return rx_pos < rx_buffer.size(); }
+
+    bool data_available_impl() {
+        if(use_has_data_flag) return has_data && rx_pos < rx_buffer.size();
+        return rx_pos < rx_buffer.size();
+    }
+
     unsigned long get_millis() const { return millis_value; }
-    bool connect_impl() { return connected; }
-    void disconnect_impl() { connected = false; }
+
+    bool connect_impl() {
+        connect_call_count++;
+        if(connect_should_succeed) {
+            connected = true;
+        }
+        return connect_should_succeed;
+    }
+
+    void disconnect_impl() {
+        disconnect_called = true;
+        connected = false;
+    }
 
     // Test helpers
     unsigned long millis_value = 0;
@@ -61,6 +95,12 @@ public:
         rx_buffer.clear();
         rx_pos = 0;
         connected = true;
+        connect_should_succeed = true;
+        connect_call_count = 0;
+        disconnect_called = false;
+        has_data = false;
+        use_has_data_flag = false;
+        states_received.clear();
     }
 
     // Queue a server response message into rx_buffer
@@ -77,6 +117,18 @@ public:
     // Queue an OK response with a specific stream_id
     void queue_ok(uint16_t stream_id = 0) {
         iotmp_message msg(stream_id, message::OK);
+        queue_response(msg);
+    }
+
+    // Queue an auth OK that will match any stream_id (just an OK with stream_id 0)
+    void queue_auth_ok() {
+        // authenticate() reads the next message regardless of stream_id
+        queue_ok();
+    }
+
+    // Queue an ERROR response for auth failure
+    void queue_auth_error() {
+        iotmp_message msg(0, message::ERROR);
         queue_response(msg);
     }
 
@@ -114,6 +166,22 @@ public:
             messages.push_back(std::move(msg));
         }
         return messages;
+    }
+
+    // Helper: set both transport and base connected flags to false
+    void set_fully_disconnected() {
+        connected = false;
+        connected_ = false;
+    }
+
+    // Helper: prepare mock for a successful handle() connect+auth cycle.
+    // Sets millis_value to 5000 so should_reconnect() passes on first call
+    // (last_connection_attempt_ starts at 0, reconnect_ms_ starts at 5000).
+    void prepare_successful_connection() {
+        set_fully_disconnected();
+        connect_should_succeed = true;
+        millis_value = 5000;  // ensure should_reconnect() passes
+        queue_auth_ok();      // queue OK for authenticate()
     }
 };
 
@@ -1154,4 +1222,525 @@ TEST_CASE("read_varint fails on empty buffer") {
     mock_client client;
     uint32_t value = 0;
     CHECK(client.read_varint(value) == false);
+}
+
+// ============================================================================
+// handle() — Connection lifecycle tests
+// ============================================================================
+
+TEST_CASE("handle: connects and authenticates on first call") {
+    mock_client client;
+    client.prepare_successful_connection();
+
+    client.handle();
+
+    // connect_impl was called
+    CHECK(client.connect_call_count == 1);
+    // client should now be connected at the protocol level
+    CHECK(client.is_connected() == true);
+    // CONNECT message was sent (authenticate sent it)
+    auto sent = client.get_sent_messages();
+    REQUIRE(sent.size() >= 1);
+    CHECK(sent[0].get_message_type() == message::CONNECT);
+}
+
+TEST_CASE("handle: does not reconnect before backoff expires") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = false;
+    client.millis_value = 5000;
+
+    // First attempt at t=5000 — should call connect (fails, backoff -> 10000)
+    client.handle();
+    CHECK(client.connect_call_count == 1);
+
+    // Advance time less than the new backoff (10000ms from last attempt at 5000)
+    client.millis_value = 12000;
+    client.handle();
+    // connect_impl should NOT have been called again
+    CHECK(client.connect_call_count == 1);
+}
+
+TEST_CASE("handle: reconnects after backoff expires") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = false;
+    client.millis_value = 5000;
+
+    // First attempt at t=5000 (fails, backoff -> 10000)
+    client.handle();
+    CHECK(client.connect_call_count == 1);
+
+    // Advance time past backoff: last_attempt=5000, backoff=10000, need t>=15000
+    client.millis_value = 15000;
+    client.handle();
+    CHECK(client.connect_call_count == 2);
+}
+
+TEST_CASE("handle: exponential backoff on repeated failures") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = false;
+
+    // Attempt 1 at t=5000 (last_attempt=0, backoff=5000 -> passes)
+    // After fail: backoff -> 10000
+    client.millis_value = 5000;
+    client.handle();
+    CHECK(client.connect_call_count == 1);
+
+    // Too early: last_attempt=5000, backoff=10000, need t>=15000
+    client.millis_value = 14999;
+    client.handle();
+    CHECK(client.connect_call_count == 1);
+
+    // Attempt 2 at t=15000 — backoff was 10000, after fail -> 20000
+    client.millis_value = 15000;
+    client.handle();
+    CHECK(client.connect_call_count == 2);
+
+    // Too early: last_attempt=15000, backoff=20000, need t>=35000
+    client.millis_value = 34999;
+    client.handle();
+    CHECK(client.connect_call_count == 2);
+
+    // Attempt 3 at t=35000 — backoff was 20000, after fail -> 40000
+    client.millis_value = 35000;
+    client.handle();
+    CHECK(client.connect_call_count == 3);
+
+    // Too early: last_attempt=35000, backoff=40000, need t>=75000
+    client.millis_value = 74999;
+    client.handle();
+    CHECK(client.connect_call_count == 3);
+
+    // Attempt 4 at t=75000 — backoff was 40000, after fail -> 60000 (capped at max)
+    client.millis_value = 75000;
+    client.handle();
+    CHECK(client.connect_call_count == 4);
+
+    // Too early: last_attempt=75000, backoff=60000, need t>=135000
+    client.millis_value = 134999;
+    client.handle();
+    CHECK(client.connect_call_count == 4);
+
+    // Attempt 5 at t=135000 — backoff stays at 60000 (max)
+    client.millis_value = 135000;
+    client.handle();
+    CHECK(client.connect_call_count == 5);
+}
+
+TEST_CASE("handle: backoff resets after successful connection") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = false;
+
+    // Fail once at t=5000 — backoff goes from 5000 to 10000
+    client.millis_value = 5000;
+    client.handle();
+    CHECK(client.connect_call_count == 1);
+
+    // Succeed at t=15000 (last_attempt=5000, backoff=10000)
+    client.millis_value = 15000;
+    client.connect_should_succeed = true;
+    client.queue_auth_ok();
+    client.handle();
+    CHECK(client.connect_call_count == 2);
+    CHECK(client.is_connected() == true);
+
+    // Disconnect — reset_backoff() sets reconnect_ms_ back to 5000
+    client.disconnect();
+    client.connect_should_succeed = false;
+
+    // After reset_backoff(), reconnect_ms_ should be back to 5000.
+    // last_connection_attempt_ was 15000.
+    // Advance by 5000 ms — should attempt again at t=20000.
+    client.millis_value = 20000;
+    client.handle();
+    CHECK(client.connect_call_count == 3);
+}
+
+TEST_CASE("handle: processes incoming messages when connected") {
+    mock_client client;
+    client.prepare_successful_connection();
+    client["temperature"] = [](output& out) {
+        out["celsius"] = 42.0;
+    };
+
+    // First handle() connects and authenticates
+    client.handle();
+    CHECK(client.is_connected() == true);
+    client.tx_buffer.clear();
+    client.rx_buffer.clear();
+    client.rx_pos = 0;
+
+    // Queue a RUN message
+    iotmp_message run_msg(message::RUN);
+    run_msg.set_stream_id(77);
+    run_msg[message::field::RESOURCE] = std::string("temperature");
+    client.queue_response(run_msg);
+
+    // Second handle() should process the message
+    client.handle();
+
+    auto sent = client.get_sent_messages();
+    REQUIRE(sent.size() >= 1);
+    CHECK(sent[0].get_message_type() == message::OK);
+    CHECK(sent[0].get_stream_id() == 77);
+    REQUIRE(sent[0].has_payload());
+    CHECK(sent[0].payload()["celsius"].get<double>() == doctest::Approx(42.0));
+}
+
+TEST_CASE("handle: disconnects when transport drops") {
+    mock_client client;
+    client.prepare_successful_connection();
+
+    client.handle();
+    CHECK(client.is_connected() == true);
+    client.states_received.clear();
+
+    // Simulate transport drop
+    client.connected = false;
+    client.rx_buffer.clear();
+    client.rx_pos = 0;
+
+    client.handle();
+    CHECK(client.is_connected() == false);
+
+    // Should have notified SOCKET_DISCONNECTED
+    bool found_disconnected = false;
+    for(auto s : client.states_received) {
+        if(s == client_state::SOCKET_DISCONNECTED) found_disconnected = true;
+    }
+    CHECK(found_disconnected == true);
+}
+
+TEST_CASE("handle: sends keepalive after interval") {
+    mock_client client;
+    client.prepare_successful_connection();
+    // millis_value is 5000 from prepare_successful_connection()
+
+    client.handle();
+    CHECK(client.is_connected() == true);
+    client.tx_buffer.clear();
+    client.rx_buffer.clear();
+    client.rx_pos = 0;
+
+    // Keepalive timer was set to 5000, interval is 60000ms, so fires at 65000
+    client.millis_value = 65000;
+    client.handle();
+
+    auto sent = client.get_sent_messages();
+    bool has_keepalive = false;
+    for(auto& m : sent) {
+        if(m.get_message_type() == message::KEEP_ALIVE) has_keepalive = true;
+    }
+    CHECK(has_keepalive == true);
+}
+
+TEST_CASE("handle: does not send keepalive before interval") {
+    mock_client client;
+    client.prepare_successful_connection();
+    // millis_value is 5000 from prepare_successful_connection()
+
+    client.handle();
+    CHECK(client.is_connected() == true);
+    client.tx_buffer.clear();
+    client.rx_buffer.clear();
+    client.rx_pos = 0;
+
+    // Keepalive timer was set to 5000, interval is 60000ms
+    // Advance to 35000 (only 30000ms since last keepalive, less than 60000)
+    client.millis_value = 35000;
+    client.handle();
+
+    auto sent = client.get_sent_messages();
+    bool has_keepalive = false;
+    for(auto& m : sent) {
+        if(m.get_message_type() == message::KEEP_ALIVE) has_keepalive = true;
+    }
+    CHECK(has_keepalive == false);
+}
+
+TEST_CASE("handle: connection failed notifies SOCKET_CONNECTING then SOCKET_CONNECTION_ERROR") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = false;
+    client.millis_value = 5000;
+
+    client.handle();
+
+    REQUIRE(client.states_received.size() >= 2);
+    CHECK(client.states_received[0] == client_state::SOCKET_CONNECTING);
+    CHECK(client.states_received[1] == client_state::SOCKET_CONNECTION_ERROR);
+}
+
+TEST_CASE("handle: auth failed notifies AUTHENTICATING then AUTH_FAILED") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = true;
+    client.queue_auth_error();
+    client.millis_value = 5000;
+
+    client.handle();
+
+    // Find AUTHENTICATING and AUTH_FAILED in the states
+    bool found_authenticating = false;
+    bool found_auth_failed = false;
+    for(auto s : client.states_received) {
+        if(s == client_state::AUTHENTICATING) found_authenticating = true;
+        if(s == client_state::AUTH_FAILED) found_auth_failed = true;
+    }
+    CHECK(found_authenticating == true);
+    CHECK(found_auth_failed == true);
+}
+
+TEST_CASE("handle: successful connection notifies all states in order") {
+    mock_client client;
+    client.prepare_successful_connection();
+
+    client.handle();
+
+    // Expected order: SOCKET_CONNECTING -> SOCKET_CONNECTED -> AUTHENTICATING -> AUTHENTICATED -> READY
+    REQUIRE(client.states_received.size() >= 5);
+    CHECK(client.states_received[0] == client_state::SOCKET_CONNECTING);
+    CHECK(client.states_received[1] == client_state::SOCKET_CONNECTED);
+    CHECK(client.states_received[2] == client_state::AUTHENTICATING);
+    CHECK(client.states_received[3] == client_state::AUTHENTICATED);
+    CHECK(client.states_received[4] == client_state::READY);
+}
+
+TEST_CASE("handle: auth failure causes disconnect and backoff update") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = true;
+    client.queue_auth_error();
+    client.millis_value = 5000;
+
+    client.handle();
+
+    // Should not be connected
+    CHECK(client.is_connected() == false);
+    // disconnect_impl should have been called
+    CHECK(client.disconnect_called == true);
+    // connect_call_count should be 1
+    CHECK(client.connect_call_count == 1);
+
+    // Backoff should have been updated — next attempt needs more time
+    // Initial backoff was 5000, after update_backoff -> 10000
+    // last_attempt was 5000, so need t >= 15000
+    client.connect_should_succeed = false;
+    client.millis_value = 10000;
+    client.handle();
+    CHECK(client.connect_call_count == 1);  // no new attempt (10000-5000=5000 < 10000)
+
+    client.millis_value = 15000;
+    client.handle();
+    CHECK(client.connect_call_count == 2);  // retried (15000-5000=10000 >= 10000)
+}
+
+// ============================================================================
+// disconnect() tests
+// ============================================================================
+
+TEST_CASE("disconnect: clears connected flag") {
+    mock_client client;
+    client.prepare_successful_connection();
+    client.handle();
+    CHECK(client.is_connected() == true);
+
+    client.disconnect();
+    CHECK(client.is_connected() == false);
+}
+
+TEST_CASE("disconnect: notifies SOCKET_DISCONNECTED") {
+    mock_client client;
+    client.prepare_successful_connection();
+    client.handle();
+    client.states_received.clear();
+
+    client.disconnect();
+
+    REQUIRE(client.states_received.size() >= 1);
+    CHECK(client.states_received[0] == client_state::SOCKET_DISCONNECTED);
+}
+
+TEST_CASE("disconnect: clears streams") {
+    mock_client client;
+    client.prepare_successful_connection();
+    client["temperature"] = [](output& out) {
+        out["celsius"] = 22.0;
+    };
+    client.handle();
+    client.tx_buffer.clear();
+    client.rx_buffer.clear();
+    client.rx_pos = 0;
+
+    // Start a stream
+    iotmp_message start_req(message::START_STREAM);
+    start_req.set_stream_id(800);
+    start_req[message::field::RESOURCE] = std::string("temperature");
+    client.queue_response(start_req);
+    iotmp_message incoming(message::RESERVED);
+    REQUIRE(client.read_message(incoming));
+    client.handle_message(incoming);
+
+    auto* res = client.find_resource("temperature");
+    REQUIRE(res != nullptr);
+    CHECK(res->stream_enabled() == true);
+
+    client.disconnect();
+
+    CHECK(res->stream_enabled() == false);
+    CHECK(res->get_stream_id() == 0);
+}
+
+TEST_CASE("disconnect: calls disconnect_impl") {
+    mock_client client;
+    client.prepare_successful_connection();
+    client.handle();
+    client.disconnect_called = false;  // reset after handle's connect
+
+    client.disconnect();
+    CHECK(client.disconnect_called == true);
+    CHECK(client.connected == false);
+}
+
+TEST_CASE("disconnect: second disconnect does not notify again") {
+    mock_client client;
+    client.prepare_successful_connection();
+    client.handle();
+    client.states_received.clear();
+
+    client.disconnect();
+    REQUIRE(client.states_received.size() >= 1);
+    CHECK(client.states_received.back() == client_state::SOCKET_DISCONNECTED);
+
+    size_t count_after_first = client.states_received.size();
+    client.disconnect();
+    // No additional SOCKET_DISCONNECTED should be emitted
+    CHECK(client.states_received.size() == count_after_first);
+}
+
+// ============================================================================
+// Keepalive detailed tests
+// ============================================================================
+
+TEST_CASE("keepalive: resets timer after sending") {
+    mock_client client;
+    client.prepare_successful_connection();
+    // millis_value is 5000 from prepare_successful_connection()
+
+    client.handle();
+    CHECK(client.is_connected() == true);
+
+    // Clear buffers to track new messages
+    client.tx_buffer.clear();
+    client.rx_buffer.clear();
+    client.rx_pos = 0;
+
+    // last_keepalive_ was set to 5000 during connection.
+    // Advance to 65000ms (60000ms since last keepalive) — should send keepalive
+    client.millis_value = 65000;
+    client.handle();
+    {
+        auto sent = client.get_sent_messages();
+        bool has_ka = false;
+        for(auto& m : sent) {
+            if(m.get_message_type() == message::KEEP_ALIVE) has_ka = true;
+        }
+        CHECK(has_ka == true);
+    }
+
+    // Clear and advance to 105000ms (only 40000ms since last keepalive at 65000)
+    client.tx_buffer.clear();
+    client.millis_value = 105000;
+    client.handle();
+    {
+        auto sent = client.get_sent_messages();
+        bool has_ka = false;
+        for(auto& m : sent) {
+            if(m.get_message_type() == message::KEEP_ALIVE) has_ka = true;
+        }
+        CHECK(has_ka == false);  // not yet, only 40000ms since last
+    }
+
+    // Advance to 125000ms (60000ms since last keepalive at 65000)
+    client.tx_buffer.clear();
+    client.millis_value = 125000;
+    client.handle();
+    {
+        auto sent = client.get_sent_messages();
+        bool has_ka = false;
+        for(auto& m : sent) {
+            if(m.get_message_type() == message::KEEP_ALIVE) has_ka = true;
+        }
+        CHECK(has_ka == true);
+    }
+}
+
+TEST_CASE("keepalive: no keepalive sent immediately after connection") {
+    mock_client client;
+    client.prepare_successful_connection();
+    // millis_value is 5000 from prepare_successful_connection()
+
+    client.handle();
+    CHECK(client.is_connected() == true);
+
+    // The CONNECT message should be present but no KEEP_ALIVE
+    auto sent = client.get_sent_messages();
+    for(auto& m : sent) {
+        CHECK(m.get_message_type() != message::KEEP_ALIVE);
+    }
+}
+
+// ============================================================================
+// handle() — multiple connect/disconnect cycles
+// ============================================================================
+
+TEST_CASE("handle: full reconnect cycle after disconnect") {
+    mock_client client;
+    client.prepare_successful_connection();
+    // millis_value is 5000 from prepare_successful_connection()
+
+    // First connection at t=5000
+    client.handle();
+    CHECK(client.is_connected() == true);
+    CHECK(client.connect_call_count == 1);
+
+    // Disconnect
+    client.disconnect();
+    CHECK(client.is_connected() == false);
+
+    // Queue new auth OK for reconnection
+    client.rx_buffer.clear();
+    client.rx_pos = 0;
+    client.tx_buffer.clear();
+    client.queue_auth_ok();
+
+    // Need to wait for backoff (5000ms since reset_backoff).
+    // last_connection_attempt_ was 5000, reconnect_ms_ is 5000 after reset.
+    client.millis_value = 10000;
+    client.handle();
+    CHECK(client.connect_call_count == 2);
+    CHECK(client.is_connected() == true);
+}
+
+TEST_CASE("handle: does not process messages or keepalive when disconnected") {
+    mock_client client;
+    client.set_fully_disconnected();
+    client.connect_should_succeed = false;
+    client.millis_value = 5000;
+
+    // Queue a message in rx_buffer — it should NOT be processed
+    iotmp_message run_msg(message::RUN);
+    run_msg.set_stream_id(1);
+    run_msg[message::field::RESOURCE] = std::string("test");
+    client.queue_response(run_msg);
+
+    client.handle();
+
+    // Connect was attempted but failed, so no messages should have been processed.
+    // tx_buffer should be empty since connect failed before sending anything.
+    auto sent = client.get_sent_messages();
+    CHECK(sent.size() == 0);
 }
