@@ -354,6 +354,67 @@ void test_value_array_const_access() {
 }
 
 // ============================================================================
+// 3b. iotmp_value: initializer_list (nlohmann-style)
+// ============================================================================
+
+void test_value_init_object() {
+    TEST("value: initializer_list object");
+    iotmp_value obj = {{"name", "sensor1"}, {"temp", 23.5}, {"active", true}};
+    CHECK(obj.is_object(), "is object");
+    CHECK(obj.size() == 3, "size == 3");
+    CHECK(obj["name"].get<std::string>() == "sensor1", "name");
+    CHECK(obj["temp"].get<double>() == 23.5, "temp");
+    CHECK(obj["active"].get<bool>() == true, "active");
+    PASS();
+}
+
+void test_value_init_nested_object() {
+    TEST("value: initializer_list nested object");
+    iotmp_value data = {
+        {"sensor", {
+            {"temp", 23.5},
+            {"hum", 65u}
+        }},
+        {"active", true}
+    };
+    CHECK(data.is_object(), "is object");
+    CHECK(data["sensor"].is_object(), "sensor is object");
+    CHECK(data["sensor"]["temp"].get<double>() == 23.5, "nested temp");
+    CHECK(data["sensor"]["hum"].get<uint64_t>() == 65, "nested hum");
+    CHECK(data["active"].get<bool>() == true, "active");
+    PASS();
+}
+
+void test_value_init_array_fallback() {
+    TEST("value: initializer_list falls back to array");
+    iotmp_value arr = {1, 2, 3};
+    CHECK(arr.is_array(), "is array");
+    CHECK(arr.size() == 3, "size == 3");
+    CHECK(arr[(size_t)0].get<int>() == 1, "element 0");
+    CHECK(arr[(size_t)2].get<int>() == 3, "element 2");
+    PASS();
+}
+
+void test_value_init_mixed_array() {
+    TEST("value: initializer_list mixed types array");
+    iotmp_value arr = {"hello", 42, true, 3.14};
+    CHECK(arr.is_array(), "is array");
+    CHECK(arr.size() == 4, "size == 4");
+    CHECK(arr[(size_t)0].get<std::string>() == "hello", "string");
+    CHECK(arr[(size_t)1].get<int>() == 42, "int");
+    CHECK(arr[(size_t)2].get<bool>() == true, "bool");
+    PASS();
+}
+
+void test_value_init_single_pair_is_object() {
+    TEST("value: single key-value pair is object");
+    iotmp_value obj = {{"key", "value"}};
+    CHECK(obj.is_object(), "is object");
+    CHECK(obj["key"].get<std::string>() == "value", "value");
+    PASS();
+}
+
+// ============================================================================
 // 4. iotmp_value: copy, move, swap
 // ============================================================================
 
@@ -1418,6 +1479,14 @@ int main() {
     test_value_array_push_back();
     test_value_array_index_access();
     test_value_array_const_access();
+
+    // -- iotmp_value initializer_list --
+    printf("\n--- iotmp_value: initializer_list ---\n");
+    test_value_init_object();
+    test_value_init_nested_object();
+    test_value_init_array_fallback();
+    test_value_init_mixed_array();
+    test_value_init_single_pair_is_object();
 
     // -- iotmp_value copy/move/swap --
     printf("\n--- iotmp_value: copy/move/swap ---\n");

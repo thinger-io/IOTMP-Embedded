@@ -176,6 +176,40 @@ public:
         o.data_.ptr = nullptr;
     }
 
+    // Initializer list — auto-detects object vs array
+    // Object: {{"key1", val1}, {"key2", val2}}  (all elements are 2-element arrays with string key)
+    // Array:  {val1, val2, val3}                 (anything else)
+    iotmp_value(std::initializer_list<iotmp_value> init) {
+        // Check if this looks like an object: all elements must be
+        // 2-element arrays where the first element is a string
+        bool is_obj = true;
+        if(init.size() == 0) {
+            is_obj = false;
+        } else {
+            for(const auto& elem : init) {
+                if(!elem.is_array() || elem.size() != 2 || !elem[(size_t)0].is_string()) {
+                    is_obj = false;
+                    break;
+                }
+            }
+        }
+
+        if(is_obj) {
+            type_ = value_t::object;
+            data_.ptr = new object_t();
+            auto& obj = *obj_ptr();
+            for(const auto& elem : init) {
+                obj.emplace_back(
+                    elem[(size_t)0].get<std::string>(),
+                    elem[(size_t)1]
+                );
+            }
+        } else {
+            type_ = value_t::array;
+            data_.ptr = new array_t(init);
+        }
+    }
+
     ~iotmp_value() { destroy(); }
 
     // ======================== Assignment ========================
