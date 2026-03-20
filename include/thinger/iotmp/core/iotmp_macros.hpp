@@ -21,28 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef THINGER_IOTMP_COMPAT_HPP
-#define THINGER_IOTMP_COMPAT_HPP
-
-#include "iotmp_resource.hpp"
-
-namespace thinger::iotmp {
-
-// operator>> assigns an output callback to a resource
-inline void operator>>(iotmp_resource& res, std::function<void(output&)> fn) {
-    res = std::move(fn);
-}
-
-// operator<< assigns an input or input/output callback to a resource
-inline void operator<<(iotmp_resource& res, std::function<void(input&)> fn) {
-    res = std::move(fn);
-}
-
-inline void operator<<(iotmp_resource& res, std::function<void(input&, output&)> fn) {
-    res = std::move(fn);
-}
-
-} // namespace thinger::iotmp
+#ifndef THINGER_IOTMP_MACROS_HPP
+#define THINGER_IOTMP_MACROS_HPP
 
 // Platform-independent macros
 #ifndef outputValue
@@ -55,11 +35,15 @@ inline void operator<<(iotmp_resource& res, std::function<void(input&, output&)>
 
 // Platform-specific macros — no-ops by default, override in platform headers
 #ifndef digitalPin
-#define digitalPin(PIN) [](thinger::iotmp::input& in, thinger::iotmp::output& out){ (void)in; (void)out; (void)PIN; }
+#define digitalPin(PIN) [](thinger::iotmp::input& in) { \
+    static bool state = false;                           \
+    if(in.is_empty()) { in = state; }                    \
+    (void)PIN;                                           \
+}
 #endif
 
 #ifndef analogPin
 #define analogPin(PIN) [](thinger::iotmp::output& out){ (void)out; (void)PIN; }
 #endif
 
-#endif // THINGER_IOTMP_COMPAT_HPP
+#endif // THINGER_IOTMP_MACROS_HPP

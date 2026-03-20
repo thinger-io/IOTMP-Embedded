@@ -143,7 +143,7 @@ include/thinger/iotmp/core/
 ├── pson_decoder.hpp      # PSON binary decoder (template)
 ├── pson_types.hpp        # PSON wire type enum
 ├── iotmp_adapters.hpp    # I/O adapters (memory, string, null writers)
-├── iotmp_compat.hpp      # Operators (>> <<) and platform macros
+├── iotmp_macros.hpp      # Platform macros (outputValue, digitalPin, etc.)
 ├── iotmp_log.hpp         # Unified logging macros
 └── iotmp_types.hpp       # Common type aliases
 ```

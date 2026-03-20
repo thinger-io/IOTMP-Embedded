@@ -245,6 +245,17 @@ namespace thinger::iotmp {
         std::function<void(input&, output&)>    input_output_fn_;
     };
 
+    // Convenience operators for resource assignment
+    inline void operator>>(iotmp_resource& res, std::function<void(output&)> fn) {
+        res = std::move(fn);
+    }
+    inline void operator<<(iotmp_resource& res, std::function<void(input&)> fn) {
+        res = std::move(fn);
+    }
+    inline void operator<<(iotmp_resource& res, std::function<void(input&, output&)> fn) {
+        res = std::move(fn);
+    }
+
 }
 
 #endif

@@ -30,7 +30,7 @@
 #include "core/iotmp_encoder.hpp"
 #include "core/iotmp_decoder.hpp"
 #include "core/iotmp_resource.hpp"
-#include "core/iotmp_compat.hpp"
+#include "core/iotmp_macros.hpp"
 #include "core/iotmp_client.hpp"
 
 #endif

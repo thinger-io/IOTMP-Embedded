@@ -35,8 +35,30 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 namespace thinger::iotmp {
+
+    // ----------------------------------------------------------------
+    // Unified client state enum — shared across all platforms.
+    // ----------------------------------------------------------------
+    enum class client_state {
+        NETWORK_CONNECTING,
+        NETWORK_CONNECTED,
+        NETWORK_CONNECT_ERROR,
+        SOCKET_CONNECTING,
+        SOCKET_CONNECTED,
+        SOCKET_CONNECTION_ERROR,
+        SOCKET_DISCONNECTED,
+        SOCKET_TIMEOUT,
+        SOCKET_ERROR,
+        AUTHENTICATING,
+        AUTHENTICATED,
+        AUTH_FAILED,
+        DISCONNECTED,
+        READY,
+        STOP_REQUEST
+    };
 
     // ----------------------------------------------------------------
     // Stream configuration stored per active stream.
@@ -59,12 +81,16 @@ namespace thinger::iotmp {
     class iotmp_client_base {
     public:
 
+        using state_callback_t = std::function<void(client_state)>;
+
         iotmp_client_base() = default;
 
         iotmp_client_base(const char* user, const char* device, const char* credential)
             : username_(user),
               device_id_(device),
               credential_(credential) {}
+
+        void set_state_callback(state_callback_t cb) { state_callback_ = std::move(cb); }
 
         // ----- CRTP dispatch -----------------------------------------
 
@@ -438,6 +464,13 @@ namespace thinger::iotmp {
         }
 
     protected:
+
+        void notify_state(client_state state) {
+            if(state_callback_) state_callback_(state);
+        }
+
+        // State callback
+        state_callback_t state_callback_;
 
         // Credentials
         const char* username_   = nullptr;
