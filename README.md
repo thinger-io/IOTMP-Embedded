@@ -2,25 +2,9 @@
 
 [![Tests](https://github.com/thinger-io/IOTMP-Embedded/actions/workflows/tests.yml/badge.svg)](https://github.com/thinger-io/IOTMP-Embedded/actions/workflows/tests.yml)
 
-Portable, header-only C++17 implementation of the [IOTMP](https://docs.thinger.io) (IoT Message Protocol) core for embedded platforms.
+Portable, header-only C++17 core for the [IOTMP](https://docs.thinger.io) (IoT Message Protocol). Provides everything needed to build an IOTMP client for any platform — protocol encoding, message handling, resource model, connection lifecycle, streaming, and server API.
 
-This library provides the protocol foundation (encoding, decoding, message framing, and resource model) used by platform-specific IOTMP client libraries such as [IOTMP-Zephyr](https://github.com/thinger-io/IOTMP-Zephyr) and [IOTMP-Arduino](https://github.com/thinger-io/iotmp-arduino).
-
-## Features
-
-- **[PSON](https://www.mdpi.com/1424-8220/21/13/4559)** binary encoding/decoding — compact, self-describing serialization format for IoT
-- **IOTMP message framing** — protobuf-style varint fields with support for all message types (CONNECT, RUN, DESCRIBE, START_STREAM, STOP_STREAM, STREAM_DATA, KEEP_ALIVE, etc.)
-- **Lightweight value type** (`iotmp_value`) — dynamic JSON-like data model at ~12 bytes per value on 32-bit targets
-- **Resource model** — register input, output, and input/output callbacks with `operator=`
-- **CRTP client base** (`iotmp_client_base`) — complete client logic (authentication, message handling, streaming, keepalive) with zero-overhead compile-time polymorphism. Platform clients only implement `send_bytes` and `recv_bytes`.
-- **Header-only** — no compilation needed, just add the include path
-- **Zero platform dependencies** — pure C++17, works on any platform with a conforming compiler
-
-## Usage
-
-### As a dependency (recommended)
-
-This library is designed to be consumed by platform-specific IOTMP client libraries:
+Used by:
 
 | Platform | Repository |
 |----------|------------|
@@ -28,127 +12,199 @@ This library is designed to be consumed by platform-specific IOTMP client librar
 | ESP-IDF (native) | [IOTMP-ESPIDF](https://github.com/thinger-io/IOTMP-ESPIDF) |
 | Zephyr RTOS | [IOTMP-Zephyr](https://github.com/thinger-io/IOTMP-Zephyr) |
 
-### Direct usage
+## Creating a client for a new platform
 
-Add the `include/` directory to your compiler's include path:
+The core provides a CRTP base class `iotmp_client_base<Derived>` that contains all the protocol logic. To support a new platform, you only implement 7 transport methods:
 
 ```cpp
 #include <thinger/iotmp/iotmp.hpp>
+
+class my_client : public thinger::iotmp::iotmp_client_base<my_client> {
+public:
+    my_client(const char* user, const char* device, const char* credential)
+        : iotmp_client_base(user, device, credential) {}
+
+    // --- Required: implement these 7 methods ---
+
+    // Send raw bytes to the server. Return true on success.
+    bool send_bytes_impl(const void* data, size_t len);
+
+    // Receive exactly `len` bytes from the server (blocking with timeout).
+    bool recv_bytes_impl(void* buf, size_t len);
+
+    // Check if the transport is connected.
+    bool is_connected_impl() const;
+
+    // Open a connection to host_:port_. Return true on success.
+    bool connect_impl();
+
+    // Close the connection.
+    void disconnect_impl();
+
+    // Check if data is available to read.
+    // Non-blocking for cooperative platforms (Arduino).
+    // Can block with short timeout for threaded platforms (RTOS).
+    bool data_available_impl();
+
+    // Return monotonic time in milliseconds.
+    unsigned long get_millis() const;
+};
 ```
 
-### Zephyr module
+That's it. The base class provides everything else:
 
-This library includes a `zephyr/module.yml` so it can be used as a Zephyr module. When added to a Zephyr workspace (via `west.yml`), it automatically exposes its include directories to dependent modules.
+- **`handle()`** — full connection lifecycle: reconnect with backoff, connect, authenticate, process messages, keepalive, streams
+- **`operator[]`** — resource registration with lambda callbacks
+- **`authenticate()`** — IOTMP CONNECT handshake
+- **`read_message()` / `write_message()` / `send_message()`** — protocol encoding/decoding
+- **`handle_message()`** — dispatches RUN, DESCRIBE, START_STREAM, STOP_STREAM, STREAM_DATA
+- **`stream_resource()` / `check_streams()`** — periodic and event-driven streaming with echo
+- **`send_keepalive()`** — keepalive management
+- **`set_property()` / `get_property()` / `write_bucket()` / `call_endpoint()`** — server API
+- **`set_state_callback()`** — connection state notifications
+- **`disconnect()`** — clean shutdown with state notification
 
-## API overview
-
-### iotmp_value
-
-A lightweight, dynamic value type that can hold null, bool, integers, floats, strings, binary data, arrays, and objects:
+### Example: minimal client
 
 ```cpp
-using namespace thinger::iotmp;
+my_client thing("username", "device_id", "credential");
+thing.set_host("iot.thinger.io");
 
-// Primitives
-iotmp_value null_val;
-iotmp_value flag = true;
-iotmp_value count = 42u;
-iotmp_value temp = 23.5;
-iotmp_value name = "sensor1";
+thing["temperature"] = [](thinger::iotmp::output& out) {
+    out["celsius"] = read_sensor();
+};
 
-// Objects (auto-promoted from null)
+thing["led"] << digitalPin(2);
+
+// Call handle() repeatedly (from main loop or RTOS task)
+while(true) {
+    thing.handle();
+}
+```
+
+## What the core provides
+
+### Value type (`iotmp_value`)
+
+Lightweight dynamic type (~12 bytes on 32-bit) supporting null, bool, integers, floats, strings, binary, arrays, and objects:
+
+```cpp
 iotmp_value obj;
 obj["temperature"] = 23.5;
-obj["humidity"] = 65u;
-obj["name"] = "indoor";
+obj["name"] = "sensor1";
 
-// Arrays
 auto arr = iotmp_value::array({1, 2, 3});
-
-// Binary
 auto bin = iotmp_value::binary({0x01, 0x02, 0x03});
+
+std::string json = obj.dump();  // JSON serialization
+auto parsed = iotmp_value::parse("{\"key\": 42}");  // JSON parsing
 ```
 
 ### Resources
 
-Define device resources with input/output callbacks. The typical usage is via a client instance:
-
 ```cpp
-// Output resource (sensor — server reads from device)
+// Output (server reads from device)
 thing["sensor"] = [](output& out) {
     out["celsius"] = read_temperature();
 };
 
-// Input resource (actuator — server writes to device)
+// Input (server writes to device)
 thing["led"] = [](input& in) {
-    set_led(in["state"].get<bool>());
+    static bool state = false;
+    if(in.is_empty()) { in = state; }
+    else { state = (bool)in; set_gpio(state); }
 };
 
-// Input/Output resource (bidirectional)
+// Input/Output (bidirectional)
 thing["config"] = [](input& in, output& out) {
     if(!in.is_empty()) threshold = in["value"].get<float>();
     out["value"] = threshold;
 };
 
-// Run resource (action, no data)
+// Run (action, no data)
 thing["reboot"] = []() { reboot(); };
 ```
 
-### PSON encoding/decoding
+### Convenience operators and macros
 
 ```cpp
-// Encode
+thing["led"] << digitalPin(2);       // input with GPIO state tracking
+thing["millis"] >> outputValue(millis());  // output expression
+thing["A0"] >> analogPin(A0);        // analog reading
+```
+
+Each platform overrides `digitalPin` and `analogPin` with its GPIO functions. The core provides no-op defaults.
+
+### Connection state
+
+```cpp
+thing.set_state_callback([](thinger::iotmp::client_state state) {
+    switch(state) {
+        case client_state::AUTHENTICATED: /* connected */ break;
+        case client_state::SOCKET_DISCONNECTED: /* lost */ break;
+    }
+});
+```
+
+### [PSON](https://www.mdpi.com/1424-8220/21/13/4559) encoding
+
+Compact binary serialization with template-based encoder/decoder:
+
+```cpp
 iotmp_value data;
 data["temp"] = 23.5;
-data["name"] = "test";
 
 std::string buffer;
 string_writer writer(buffer);
 pson_encoder<string_writer> encoder(writer);
 encoder.encode(data);
-
-// Decode
-memory_reader reader(buffer.data(), buffer.size());
-pson_decoder<memory_reader> decoder(reader);
-iotmp_value result;
-decoder.decode(result);
 ```
 
-## Building tests
+### Logging
 
-```bash
-# Using CMake
-mkdir build && cd build
-cmake ..
-make
-./test_protocol
+Define `THINGER_LOG_*` macros before including `iotmp.hpp` to route logs to your platform:
 
-# Or directly
-cd tests/native
-c++ -std=c++17 -I../../include -o test_protocol test_protocol.cpp
-./test_protocol
+```cpp
+// Arduino
+#define THINGER_LOG_INFO(fmt, ...) Serial.printf("[I] " fmt "\n", ##__VA_ARGS__)
+
+// ESP-IDF
+#define THINGER_LOG_INFO(fmt, ...) ESP_LOGI("iotmp", fmt, ##__VA_ARGS__)
+
+// Zephyr
+#define THINGER_LOG_INFO(fmt, ...) LOG_INF(fmt, ##__VA_ARGS__)
 ```
 
 ## Architecture
 
 ```
-include/thinger/iotmp/core/
-├── iotmp_client.hpp      # CRTP client base (auth, messages, streams, keepalive)
-├── iotmp_value.hpp       # Lightweight dynamic value type
-├── iotmp_resource.hpp    # Resource model (input/output callbacks)
-├── iotmp_message.hpp     # Message model (types, fields, framing)
-├── iotmp_encoder.hpp     # IOTMP message encoder
-├── iotmp_decoder.hpp     # IOTMP message decoder
-├── pson_encoder.hpp      # PSON binary encoder (template)
-├── pson_decoder.hpp      # PSON binary decoder (template)
-├── pson_types.hpp        # PSON wire type enum
-├── iotmp_adapters.hpp    # I/O adapters (memory, string, null writers)
-├── iotmp_macros.hpp      # Platform macros (outputValue, digitalPin, etc.)
-├── iotmp_log.hpp         # Unified logging macros
-└── iotmp_types.hpp       # Common type aliases
+include/thinger/iotmp/
+├── iotmp.hpp                 # Single include
+└── core/
+    ├── iotmp_client.hpp      # CRTP client base (full lifecycle)
+    ├── iotmp_value.hpp       # Dynamic value type
+    ├── iotmp_resource.hpp    # Resources + operators (>> <<)
+    ├── iotmp_message.hpp     # Message model
+    ├── iotmp_encoder.hpp     # IOTMP message encoder
+    ├── iotmp_decoder.hpp     # IOTMP message decoder
+    ├── pson_encoder.hpp      # PSON binary encoder
+    ├── pson_decoder.hpp      # PSON binary decoder
+    ├── pson_types.hpp        # Wire type enum
+    ├── iotmp_adapters.hpp    # I/O adapters
+    ├── iotmp_macros.hpp      # Platform macros
+    ├── iotmp_log.hpp         # Logging macros
+    └── iotmp_types.hpp       # Type aliases
 ```
 
-The encoders and decoders are **template-based** on Writer/Reader types, allowing zero-copy operation with any I/O backend (memory buffers, sockets, streams).
+## Tests
+
+```bash
+# Protocol tests (94 tests)
+c++ -std=c++17 -I include -o test tests/native/test_protocol.cpp && ./test
+
+# Client integration tests (51 tests, doctest)
+c++ -std=c++17 -I include -I tests -o test tests/test_client.cpp && ./test
+```
 
 ## References
 
