@@ -25,6 +25,10 @@ jobs:
         run: |
           cd tests/native
           ${{ matrix.compiler }} -std=c++17 -Wall -Wextra -Werror -I../../include -o test_protocol test_protocol.cpp
+          cd ../..
+          ${{ matrix.compiler }} -std=c++17 -Wall -Wextra -Werror -Iinclude -Itests -o tests/test_client tests/test_client.cpp
 
       - name: Run tests
-        run: ./tests/native/test_protocol
+        run: |
+          ./tests/native/test_protocol
+          ./tests/test_client
