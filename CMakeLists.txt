@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.14)
-project(iotmp_embedded VERSION 1.0.0 LANGUAGES CXX)
+
+# Detect ESP-IDF build system
+if(ESP_PLATFORM)
+    # ESP-IDF component: header-only, just expose include directory
+    idf_component_register(INCLUDE_DIRS "include")
+    return()
+endif()
+
+# Standalone CMake project
+project(iotmp_embedded VERSION 1.0.1 LANGUAGES CXX)
 
 # Header-only library
 add_library(iotmp_embedded INTERFACE)
