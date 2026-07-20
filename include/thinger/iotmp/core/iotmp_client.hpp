@@ -355,11 +355,18 @@ namespace thinger::iotmp {
             // Set the stream id on the resource
             resource->set_stream_id(stream_id);
 
-            // Check if there is an interval in parameters
+            // Parse the sampling interval. The server sends stream parameters
+            // as an OBJECT with the period (in milliseconds) under the
+            // "interval" key, e.g. {"interval": 5000}. This is what drives
+            // periodic streaming of the resource to dashboards and buckets.
             unsigned long interval_ms = 0;
             if(request.has_params()) {
                 const json_t& params = request.params();
-                if(params.is_number()) {
+                if(params.is_object()) {
+                    const json_t& iv = params["interval"];
+                    if(iv.is_number()) interval_ms = iv.get<uint64_t>();
+                } else if(params.is_number()) {
+                    // Tolerate a bare number too, just in case.
                     interval_ms = params.get<uint64_t>();
                 }
             }

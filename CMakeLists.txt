@@ -8,7 +8,7 @@ if(ESP_PLATFORM)
 endif()
 
 # Standalone CMake project
-project(iotmp_embedded VERSION 1.0.1 LANGUAGES CXX)
+project(iotmp_embedded VERSION 1.0.2 LANGUAGES CXX)
 
 # Header-only library
 add_library(iotmp_embedded INTERFACE)

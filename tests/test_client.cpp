@@ -687,7 +687,9 @@ TEST_CASE("START_STREAM with interval stores sampling interval") {
     iotmp_message request(message::START_STREAM);
     request.set_stream_id(500);
     request[message::field::RESOURCE] = std::string("temperature");
-    request[message::field::PARAMETERS] = 1000u;  // 1000ms interval
+    // The server sends the sampling interval as an object {"interval": ms},
+    // not a bare number. This is what the real START_STREAM looks like.
+    request[message::field::PARAMETERS]["interval"] = 1000u;
 
     client.queue_response(request);
     iotmp_message incoming(message::RESERVED);
@@ -1070,11 +1072,11 @@ TEST_CASE("check_streams sends data when interval elapsed") {
         out["celsius"] = 22.0;
     };
 
-    // Start a stream with 1000ms interval
+    // Start a stream with 1000ms interval (server sends it as {"interval": ms})
     iotmp_message start_req(message::START_STREAM);
     start_req.set_stream_id(900);
     start_req[message::field::RESOURCE] = std::string("temperature");
-    start_req[message::field::PARAMETERS] = 1000u;
+    start_req[message::field::PARAMETERS]["interval"] = 1000u;
 
     client.millis_value = 0;
     client.queue_response(start_req);
