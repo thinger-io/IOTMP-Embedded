@@ -32,6 +32,7 @@
 #include "iotmp_adapters.hpp"
 
 #include <algorithm>
+#include <cinttypes>
 #include <map>
 #include <string>
 #include <vector>
@@ -166,6 +167,12 @@ namespace thinger::iotmp {
         // ----- Message read / write ----------------------------------
 
         bool read_message(iotmp_message& msg) {
+            // Serialize socket access: on platforms that run the protocol
+            // in a dedicated task, this prevents a device-initiated RPC
+            // (write_bucket, get_property, ...) reading from another task
+            // from stealing bytes from the client task's read, and vice versa.
+            io_guard guard(this);
+
             // Read message type varint
             uint32_t msg_type = 0;
             if(!read_varint(msg_type)) return false;
@@ -179,7 +186,7 @@ namespace thinger::iotmp {
 
             // Validate message size
             if(body_size > max_message_size_) {
-                THINGER_LOG_ERROR("Message too large: %u (max %u)", body_size, max_message_size_);
+                THINGER_LOG_ERROR("Message too large: %" PRIu32 " (max %" PRIu32 ")", body_size, max_message_size_);
                 return false;
             }
 
@@ -195,6 +202,9 @@ namespace thinger::iotmp {
             // encode_message does two-pass: null_writer for size, then string_writer
             // Result is a complete message in a single std::string
             std::string encoded = encode_message(msg);
+            // Serialize the write so a complete frame is emitted atomically
+            // and never interleaves with sends issued from another task.
+            io_guard guard(this);
             return send_bytes(encoded.data(), encoded.size());
         }
 
@@ -208,6 +218,7 @@ namespace thinger::iotmp {
         void send_keepalive() {
             THINGER_LOG_DEBUG("Keep-alive sent");
             std::string encoded = encode_message(message::KEEP_ALIVE);
+            io_guard guard(this);
             send_bytes(encoded.data(), encoded.size());
         }
 
@@ -605,6 +616,31 @@ namespace thinger::iotmp {
 
     protected:
 
+        // ----- I/O serialization hook (thread-safety) ---------------
+        // Platforms that run the protocol loop in a dedicated task (e.g.
+        // ESP-IDF) override io_lock()/io_unlock() with a recursive mutex
+        // so that device-initiated calls (write_bucket, stream,
+        // set_property, get_property, call_endpoint...) issued from other
+        // tasks never interleave socket reads/writes with the client task.
+        // Single-threaded, cooperative platforms (Arduino, native tests)
+        // inherit these no-ops and pay no cost.
+        void io_lock() {}
+        void io_unlock() {}
+
+        // RAII helper that serializes socket access for the duration of a
+        // scope. Dispatches through the derived class so the platform's
+        // real lock is used when one is provided. The lock must be
+        // recursive on platforms that override it, since higher-level
+        // operations (e.g. send_and_wait_response) hold it while calling
+        // read_message/write_message.
+        struct io_guard {
+            iotmp_client_base* self;
+            explicit io_guard(iotmp_client_base* s) : self(s) { s->derived().io_lock(); }
+            ~io_guard() { self->derived().io_unlock(); }
+            io_guard(const io_guard&) = delete;
+            io_guard& operator=(const io_guard&) = delete;
+        };
+
         void notify_state(client_state state) {
             if(state_callback_) state_callback_(state);
         }
@@ -613,6 +649,13 @@ namespace thinger::iotmp {
 
         bool send_and_wait_response(iotmp_message& msg, json_t* response_payload = nullptr) {
             if(!connected_) return false;
+
+            // Hold the I/O lock across the whole request/response exchange.
+            // This is the critical section that made buckets fail on
+            // multi-task platforms: without it the client task would
+            // consume this call's response, so the OK/ERROR was never seen
+            // here and write_bucket()/set_property()/... always failed.
+            io_guard guard(this);
 
             msg.set_random_stream_id();
             uint16_t expected_id = msg.get_stream_id();

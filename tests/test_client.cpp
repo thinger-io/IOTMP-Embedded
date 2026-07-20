@@ -65,6 +65,27 @@ public:
 
     bool is_connected_impl() const { return connected; }
 
+    // ----- I/O serialization instrumentation ---------------------------
+    // Overrides the base no-op hooks so tests can assert that socket
+    // access is serialized and, crucially, that a request/response
+    // exchange holds the lock across its inner read/write (io_max_depth
+    // >= 2). Recursive by design: nested guards just bump the depth.
+    int io_depth = 0;
+    int io_max_depth = 0;
+    int io_lock_calls = 0;
+    int io_unlock_calls = 0;
+
+    void io_lock() {
+        io_depth++;
+        if(io_depth > io_max_depth) io_max_depth = io_depth;
+        io_lock_calls++;
+    }
+
+    void io_unlock() {
+        io_depth--;
+        io_unlock_calls++;
+    }
+
     bool data_available_impl() {
         if(use_has_data_flag) return has_data && rx_pos < rx_buffer.size();
         return rx_pos < rx_buffer.size();
@@ -101,6 +122,10 @@ public:
         has_data = false;
         use_has_data_flag = false;
         states_received.clear();
+        io_depth = 0;
+        io_max_depth = 0;
+        io_lock_calls = 0;
+        io_unlock_calls = 0;
     }
 
     // Queue a server response message into rx_buffer
@@ -1099,6 +1124,99 @@ TEST_CASE("check_streams does not send for zero-interval streams") {
     client.check_streams();
     auto sent = client.get_sent_messages();
     CHECK(sent.size() == 0);
+}
+
+// ============================================================================
+// Server API RPC tests (send_and_wait_response) + I/O serialization
+//
+// This path (write_bucket / set_property / get_property / call_endpoint) had
+// no coverage, yet it is exactly what failed on multi-task platforms: the
+// client task consumed the RPC response, so the OK was never seen here and
+// buckets never recorded. These tests lock in both the happy path and the
+// serialization guarantee that fixes it.
+// ============================================================================
+
+// send_and_wait_response assigns a random stream_id via rand(). Reseed rand()
+// so we can pre-queue an OK with the id the client is about to generate.
+static uint16_t predict_next_stream_id(unsigned seed) {
+    srand(seed);
+    uint16_t id = static_cast<uint16_t>(rand());
+    srand(seed); // rewind so the client's next rand() yields the same id
+    return id;
+}
+
+TEST_CASE("write_bucket completes a request/response exchange") {
+    mock_client client;
+    client.set_connected(true);
+
+    uint16_t expected_id = predict_next_stream_id(12345);
+    client.queue_ok(expected_id);
+
+    json_t data;
+    data["value"] = 42;
+    bool ok = client.write_bucket("my_bucket", std::move(data));
+
+    CHECK(ok == true);
+
+    auto sent = client.get_sent_messages();
+    REQUIRE(sent.size() >= 1);
+    CHECK(sent[0].get_message_type() == message::RUN);
+    CHECK(sent[0].get_stream_id() == expected_id);
+    CHECK(sent[0][message::field::PARAMETERS].get<uint64_t>()
+          == static_cast<uint64_t>(server::WRITE_BUCKET));
+}
+
+TEST_CASE("write_bucket returns false when not connected") {
+    mock_client client;
+    client.set_connected(false);
+    json_t data;
+    data["value"] = 1;
+    CHECK(client.write_bucket("b", std::move(data)) == false);
+}
+
+TEST_CASE("write_bucket returns false on ERROR response") {
+    mock_client client;
+    client.set_connected(true);
+    uint16_t expected_id = predict_next_stream_id(777);
+    iotmp_message err(expected_id, message::ERROR);
+    client.queue_response(err);
+    json_t data;
+    data["value"] = 1;
+    CHECK(client.write_bucket("b", std::move(data)) == false);
+}
+
+TEST_CASE("send_and_wait_response holds the I/O lock across the whole exchange") {
+    mock_client client;
+    client.set_connected(true);
+    uint16_t expected_id = predict_next_stream_id(2024);
+    client.queue_ok(expected_id);
+
+    client.io_max_depth = 0;
+    json_t data;
+    data["value"] = 7;
+    bool ok = client.write_bucket("b", std::move(data));
+
+    CHECK(ok == true);
+    // The outer guard (in send_and_wait_response) must still be held while the
+    // inner send_message/read_message take the lock -> depth reaches >= 2.
+    // That nesting is precisely what stops another task from reading the
+    // socket mid-exchange and stealing this response.
+    CHECK(client.io_max_depth >= 2);
+    // Everything released and balanced.
+    CHECK(client.io_depth == 0);
+    CHECK(client.io_lock_calls == client.io_unlock_calls);
+}
+
+TEST_CASE("write_message serializes socket access and always balances the lock") {
+    mock_client client;
+    iotmp_message msg(message::KEEP_ALIVE);
+
+    int before = client.io_lock_calls;
+    client.write_message(msg);
+    CHECK(client.io_lock_calls == before + 1);
+    CHECK(client.io_max_depth >= 1);
+    CHECK(client.io_depth == 0);
+    CHECK(client.io_lock_calls == client.io_unlock_calls);
 }
 
 // ============================================================================
