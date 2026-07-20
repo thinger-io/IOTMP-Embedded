@@ -563,10 +563,13 @@ namespace thinger::iotmp {
 
         // ----- Server API --------------------------------------------
 
+        // Server API request layout: the numeric run selector goes in the
+        // RESOURCE field and the target id/name goes in PARAMETERS. This
+        // matches what the server expects (and the reference desktop client).
         bool set_property(const char* id, json_t data) {
             iotmp_message msg(message::RUN);
-            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::SET_DEVICE_PROPERTY);
-            msg[message::field::RESOURCE] = id;
+            msg[message::field::RESOURCE] = static_cast<uint64_t>(server::SET_DEVICE_PROPERTY);
+            msg[message::field::PARAMETERS] = id;
             msg[message::field::PAYLOAD] = std::move(data);
             return send_and_wait_response(msg);
         }
@@ -578,23 +581,23 @@ namespace thinger::iotmp {
 
         bool write_bucket(const char* id, json_t data) {
             iotmp_message msg(message::RUN);
-            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::WRITE_BUCKET);
-            msg[message::field::RESOURCE] = id;
+            msg[message::field::RESOURCE] = static_cast<uint64_t>(server::WRITE_BUCKET);
+            msg[message::field::PARAMETERS] = id;
             msg[message::field::PAYLOAD] = std::move(data);
             return send_and_wait_response(msg);
         }
 
         bool call_endpoint(const char* name) {
             iotmp_message msg(message::RUN);
-            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::CALL_ENDPOINT);
-            msg[message::field::RESOURCE] = name;
+            msg[message::field::RESOURCE] = static_cast<uint64_t>(server::CALL_ENDPOINT);
+            msg[message::field::PARAMETERS] = name;
             return send_and_wait_response(msg);
         }
 
         bool call_endpoint(const char* name, json_t data) {
             iotmp_message msg(message::RUN);
-            msg[message::field::PARAMETERS] = static_cast<uint64_t>(server::CALL_ENDPOINT);
-            msg[message::field::RESOURCE] = name;
+            msg[message::field::RESOURCE] = static_cast<uint64_t>(server::CALL_ENDPOINT);
+            msg[message::field::PARAMETERS] = name;
             msg[message::field::PAYLOAD] = std::move(data);
             return send_and_wait_response(msg);
         }
@@ -696,8 +699,8 @@ namespace thinger::iotmp {
             json_t* response_payload)
         {
             iotmp_message msg(message::RUN);
-            msg[message::field::PARAMETERS] = static_cast<uint64_t>(run_code);
-            msg[message::field::RESOURCE] = resource_name;
+            msg[message::field::RESOURCE] = static_cast<uint64_t>(run_code);
+            msg[message::field::PARAMETERS] = resource_name;
             if(request_payload) {
                 msg[message::field::PAYLOAD] = std::move(*request_payload);
             }

@@ -1164,8 +1164,11 @@ TEST_CASE("write_bucket completes a request/response exchange") {
     REQUIRE(sent.size() >= 1);
     CHECK(sent[0].get_message_type() == message::RUN);
     CHECK(sent[0].get_stream_id() == expected_id);
-    CHECK(sent[0][message::field::PARAMETERS].get<uint64_t>()
+    // Wire layout the server expects (and the reference desktop client uses):
+    // the numeric run selector in RESOURCE, the bucket id in PARAMETERS.
+    CHECK(sent[0][message::field::RESOURCE].get<uint64_t>()
           == static_cast<uint64_t>(server::WRITE_BUCKET));
+    CHECK(sent[0][message::field::PARAMETERS].get<std::string>() == "my_bucket");
 }
 
 TEST_CASE("write_bucket returns false when not connected") {

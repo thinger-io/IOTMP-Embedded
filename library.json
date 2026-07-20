@@ -1,6 +1,6 @@
 {
     "name": "IOTMP-Embedded",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Portable IOTMP protocol core for embedded platforms — PSON encoding, message framing, and resource model",
     "keywords": "iot, thinger, iotmp, pson, embedded, protocol",
     "repository": {
